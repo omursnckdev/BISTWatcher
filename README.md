@@ -5,8 +5,8 @@ Every stock gets a transparent 0–100 score built from several independent fact
 a regime-aware signal classification, and a mandatory risk plan (entry zone, ATR stop,
 R-multiple targets, reward/risk, position size). No factor ever says "BUY" on its own.
 
-This repository implements **Phase 1 (technical core)** and **Phase 2 (backtesting,
-walk-forward validation, factor research)** of
+This repository implements **Phase 1 (technical core)**, **Phase 2 (backtesting,
+walk-forward validation, factor research)** and **Phase 3 (KAP disclosures / news)** of
 [`BIST_Quant_Trading_Bot_Project_Spec.md`](BIST_Quant_Trading_Bot_Project_Spec.md).
 It generates signals only and never places orders.
 
@@ -36,7 +36,7 @@ Requires Python 3.11+ (3.12 recommended).
 python -m venv .venv && source .venv/bin/activate   # Windows PowerShell: .venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
 
-python -m bist_quant scan                        # configured universe (BIST30), live Yahoo data
+python -m bist_quant scan                        # configured universe (BIST100), live data + KAP news
 python -m bist_quant scan --universe BIST100 --top 20
 python -m bist_quant scan --symbols THYAO ASELS --detail
 python -m bist_quant scan --min-signal WEAK_SETUP # hide WATCH / NO_TRADE rows
@@ -52,6 +52,9 @@ python -m bist_quant backtest --universe BIST100 --set risk.use_resistance_cap=f
 python -m bist_quant sweep --grid "strategy.buy_threshold_offset=[-10,-5,0,5,10]"
 python -m bist_quant walkforward                 # choose params in-sample, test out-of-sample
 python -m bist_quant research                    # does the score predict forward returns?
+python -m bist_quant kap-sync                    # download KAP disclosure history (BIST100)
+python -m bist_quant news ASELS THYAO            # classified KAP events + current news score
+python -m bist_quant backtest --no-news          # ablation: technical factors only
 
 pytest                                           # unit + integration tests (offline)
 BIST_QUANT_NETWORK_TESTS=1 pytest -k live        # optional live Yahoo check
@@ -86,13 +89,15 @@ DATA ─► FEATURES ─► FACTORS ─► SCORE ─► RISK FILTER ─► SIGNA
 | Momentum | 15 | RSI zone (45–65: 5, 65–70: 4, >70: 2, 30–45: 1, <30: 0), MACD>signal 3, histogram rising 2, histogram>0 1, ROC(10)>0 2, share of last 10 days with RSI>50 × 2 |
 | Volume | 10 | up-day volume ratio (≥2.0: 4, ≥1.5: 3, ≥1.2: 2, ≥0.8: 1); high-volume down day = 0 and flagged as distribution; light-volume pullback 2; OBV>EMA 2; A/D rising 2; Bollinger breakout on volume 2 |
 | Relative strength | 10 | 5D / 20D / 60D excess return vs XU100 worth 2 / 4 / 4, each on a linear ramp (0 at −k, full at +k, k = 2·√(n/20) pp) so there is no knife-edge threshold |
-| News / KAP | 15 | *disabled until Phase 3* |
+| News / KAP | 15 | 7.5 neutral without news; point-in-time KAP impact via tanh (see News & KAP below) |
 | Institutional flow | 15 | *disabled until Phase 4* |
 | Market regime | 10 | XU100 above EMA20 / EMA50 / EMA200 (2 each), EMA50>EMA200 2, MACD>0 1, breadth ≥50% of universe above EMA50 1 |
 | Volatility / setup | 5 | ATR 1.5–5% of price 2, extension from EMA20 ≤2 ATR 2 (shallow pullback 1), Bollinger squeeze 1 |
 
 With `renormalize_missing: true`, disabled factors are left out and the total is rescaled to
-0–100 over the enabled weights (Phase 1: 70 points, so 56/70 becomes 80). Weights, rubric
+0–100 over the enabled weights: 85 points with news, 70 without (for example, 56/70 becomes
+80). A neutral news score of 7.5/15 pulls totals slightly toward 50, so compare runs with
+and without news at similar trade counts (`sweep` over `strategy.buy_threshold_offset`). Weights, rubric
 thresholds and bands live in `config/scoring.yaml`.
 
 ### Signals
@@ -161,11 +166,41 @@ An optional ATR trailing stop is also available.
 
 Everything runs through the same `strategy/evaluate.py` code the scanner uses.
 
+## News & KAP (Phase 3)
+
+Company disclosures come from **KAP** (kap.org.tr). The client uses the JSON endpoints
+behind the site's public disclosure search. That is not a documented API, so it may
+change. How it works:
+- **Resolution:** each ticker is resolved to its KAP company id; some companies list several codes.
+- **Download:** disclosures are fetched per month for the universe, and any query that hits the 2,000-row cap is split automatically.
+- **Storage:** everything is stored raw under `data/raw/kap/`, and syncs are incremental.
+- **Full text:** the disclosure text is downloaded only for event types where amounts matter.
+
+**Classification** produces metadata only (event type, sentiment −1..1, importance,
+confidence, impact horizon, amount); it never produces a trade decision. Implementations of the `NewsClassifier`
+protocol:
+
+| `news.classifier` | What | Cost |
+|---|---|---|
+| `rules` (default) | Deterministic Turkish rules on KAP's subject and summary: contracts, bonus / rights issues, buybacks, dividends, credit ratings, exchange measures (brüt takas, tek fiyat…), SPK bans, share conversions, production issues, lawsuits, M&A, investments… | free, reproducible, used for backtests |
+| `claude` | Every disclosure classified by Claude (`claude-opus-5`, effort `low`, JSON-schema output, refusal fallback). Responses are cached on disk per disclosure | API cost; needs `pip install -e ".[llm]"` and `ANTHROPIC_API_KEY` |
+| `hybrid` | Rules for routine filings, Claude only for potentially material ones | reduced API cost |
+
+**News score (0–15)**, computed point-in-time:
+- **Net impact** is the sum over recent events of sentiment × importance × confidence × source quality × size × reaction × decay.
+- **Points** are 7.5 × (1 + tanh(net / 0.6)): no news gives a neutral 7.5, and strongly positive or negative news pushes toward 15 or 0.
+- **Decay** is exponential, with half-lives of 1, 3 and 7 days for short, medium and long impact horizons, and nothing counts after 10 days. The spec's step table is also available.
+- **Size** (spec §23) compares the stated amount (TRY / USD / EUR) with the market cap on the event date (İş Yatırım data). An amount of 1% of market cap is neutral; the multiplier ranges from 0.5 to 2.
+- **Reaction** (spec §24) measures the excess move versus XU100 in the event session, in ATR units. When it confirms the news, the impact gets ×1.2; no reaction gives ×0.5; a contrary move gives −0.5. For neutral material news (for example financial reports), the reaction itself sets the sentiment. A reaction is only used once it could have been observed, at that session's close.
+- **Cutoff:** a disclosure counts for day T's signal only if it was published by T 18:15. After-hours disclosures count from the next session.
+
+`research` adds a **KAP event study**: excess returns versus XU100 after each event type and tone, and after each news-vs-reaction pattern. `--no-news` (or `--set news.enabled=false`) gives the technical-only baseline for ablation.
+
 ## Configuration
 
 | File | Contents |
 |---|---|
-| `config/settings.yaml` | data provider and cache, indicator periods, regime rules, thresholds, risk, liquidity |
+| `config/settings.yaml` | data provider and cache, indicator periods, regime rules, thresholds, risk, liquidity, news (classifier, decay, reaction, scale, LLM) |
 | `config/scoring.yaml` | factor weights (must sum to 100), rubric thresholds, bands |
 | `config/universe.yaml` | mode (`BIST30`, `BIST50`, `BIST100`, `CUSTOM`), symbol lists, sector map |
 | `config/backtest.yaml` | backtest period, costs, entry mode, exits, walk-forward grid, research horizons |
@@ -197,6 +232,8 @@ register it in `build_provider`. Strategy code never imports a vendor.
 - **Survivorship bias:** `--as-of` replays use *today's* universe. Historical index membership is needed before any serious backtest.
 - **Sector relative strength** needs sector index data and is not scored yet. The sector map in `universe.yaml` is prepared for it.
 - **Yahoo data** is free and unofficial: it can have gaps, delays or late corporate-action adjustments. Use a licensed vendor through the provider interface for production.
+- **KAP and İş Yatırım** are accessed through their websites' internal JSON endpoints. These are unofficial and may change; a failure disables the news factor with a warning instead of stopping the scan.
+- **Financial news beyond KAP** (RSS or news APIs) is not ingested yet. Without a historical archive it could not be backtested anyway.
 - **Unvalidated parameters:** all thresholds and weights are starting hypotheses. Phase 2 must test them statistically, including robustness across parameter ranges.
 
 ## Project layout
@@ -210,10 +247,13 @@ src/bist_quant/
   scanner.py            orchestration: data -> features -> score -> signal
   reporting.py          table / detail / JSON / CSV output
   models/               market.py, signals.py (domain models)
-  data/                 market_data.py (providers), quality.py, universe.py
+  data/                 market_data.py (providers), quality.py, universe.py,
+                        kap_data.py (KAP client/store), fundamentals.py (market cap, FX)
+  news/                 parser, classifier (rules/hybrid), llm (Claude), decay, scale,
+                        reaction, pipeline
   indicators/           trend, momentum, volatility, volume, relative_strength, features
   regime/               market_regime.py
-  scoring/              technical_score.py, composite_score.py
+  scoring/              technical_score.py, news_score.py, composite_score.py
   strategy/             entry.py (classification), filters.py (liquidity, stale data)
   risk/                 stop_loss, take_profit, position_size, plan
   strategy/evaluate.py  one row -> score -> signal (shared by scanner and backtest)
@@ -229,8 +269,8 @@ data/raw, data/processed, data/cache   (git-ignored)
 |---|---|---|
 | 1 | Technical scanner, regime, scoring, risk plan, CLI, tests | ✅ this repo |
 | 2 | Backtesting: costs, stops/targets, metrics, benchmarks, walk-forward, factor research | ✅ |
-| 3 | News & KAP ingestion, LLM classification (metadata only), decay, news score | next |
-| 4 | Broker/institutional flow (incl. BofA), custody data, flow score | planned |
+| 3 | News & KAP ingestion, LLM classification (metadata only), decay, news score, event study | ✅ |
+| 4 | Broker/institutional flow (incl. BofA), custody data, flow score | next |
 | 5 | Composite model, ablation, out-of-sample validation | planned |
 | 6–8 | Dashboard, paper trading, optional broker execution | planned |
 

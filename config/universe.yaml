@@ -4,7 +4,7 @@
 # Note: symbols use plain BIST tickers (no ".IS" suffix).
 # Ticker changes already applied: KOZAL -> TRALT, KOZAA -> TRMET.
 
-mode: BIST30
+mode: BIST100
 
 symbols:
   - THYAO

@@ -82,8 +82,52 @@ liquidity:
   # (a 5,000 TRY stock trading 40k shares/day is ~200M TRY of turnover).
   min_avg_volume: 0
 
-news:
-  enabled: false              # Phase 3
+news:                         # Phase 3: KAP disclosures -> 0-15 news score
+  enabled: true
+  # rules  : deterministic Turkish KAP rules (free; used for historical backtests)
+  # claude : every disclosure classified by the LLM (needs ANTHROPIC_API_KEY, costs money)
+  # hybrid : rules for routine filings, LLM only for potentially material ones
+  classifier: rules
+  source_quality: {kap: 1.0}
+  session_close_time: "18:00" # disclosures after the close belong to the next session
+  cutoff_time: "18:15"        # news published up to T 18:15 counts for T's signal
+  saturation: 0.6             # net impact where the score is ~76% of the way to 0 / 15
+  min_importance: 0.05        # ignore events below this importance
+  fetch_details: true         # download disclosure text for the types below (amounts, LLM)
+  detail_event_types: [new_contract, government_contract, export_deal, investment,
+                       capacity_expansion, merger_acquisition]
+  detail_max_per_run: 3000
+  kap_dir: data/raw/kap
+  sync: true                  # download missing KAP months before scanning/backtesting
+  decay:
+    mode: exponential         # exponential | step (spec table)
+    half_life_hours: {short: 24, medium: 72, long: 168}
+    max_age_days: 10
+    step_table: [[6, 1.0], [24, 0.7], [72, 0.4], [168, 0.15]]
+  reaction:                   # news vs price reaction (spec section 24)
+    enabled: true
+    window_sessions: 1
+    threshold_atr: 0.5        # excess move vs XU100 beyond 0.5 ATR = a reaction
+    neutral_band: 0.1
+    confirm_multiplier: 1.2   # good news + stock up (or bad news + stock down)
+    no_reaction_multiplier: 0.5
+    contrary_multiplier: -0.5 # good news + stock down => treated as weakness
+    infer_neutral: true       # neutral-sentiment material news (e.g. earnings): use reaction
+    implied_max: 0.6
+    min_importance_for_inference: 0.5
+  scale:                      # contract value vs market cap (spec section 23)
+    enabled: true
+    reference_ratio: 0.01     # amount = 1% of market cap => neutral
+    sensitivity: 0.5
+    min_multiplier: 0.5
+    max_multiplier: 2.0
+  llm:
+    model: claude-opus-5
+    effort: low               # classification does not need deep reasoning
+    max_text_chars: 6000
+    concurrency: 4
+    cache_dir: data/cache/llm
+    use_fallbacks: true
 
 institutional_flow:
   enabled: false              # Phase 4

@@ -20,6 +20,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.5"]
+llm = ["anthropic>=1.0"]
 
 [project.scripts]
 bist-quant = "bist_quant.main:main"

@@ -114,6 +114,7 @@ def evaluate_symbol(
         if comp.enabled:
             explanation.positive_factors.extend(comp.positive_factors)
             explanation.negative_factors.extend(comp.negative_factors)
+            explanation.notes.extend(comp.notes)
     indicators = {
         k: (None if pd.isna(row.get(k)) else round(float(row[k]), 4))
         for k in EXPORTED_INDICATORS
@@ -146,6 +147,23 @@ def evaluate_symbol(
     return result
 
 
+def _news_components(settings, symbols, features, index_bars, news_events, now, as_of):
+    """News factor per symbol at the scan's information cutoff."""
+    if not settings.news.enabled:
+        return {}
+    weight = settings.scoring.weights.news
+    if news_events is None:
+        from bist_quant.scoring.composite_score import disabled_component
+
+        comp = disabled_component("news", weight, "KAP news unavailable for this scan")
+        return {s: {"news": comp} for s in symbols}
+    from bist_quant.news.pipeline import attach_reactions
+
+    book = attach_reactions(news_events, features, index_bars["close"], settings)
+    cutoff = book.cutoff_for(as_of) if as_of is not None else now
+    return {s: {"news": book.component(s, cutoff, weight)} for s in symbols}
+
+
 async def run_scan(
     settings: Settings,
     symbols: list[str],
@@ -153,6 +171,7 @@ async def run_scan(
     as_of: date | None = None,
     now: datetime | None = None,
     breadth_symbols: list[str] | None = None,
+    news_events: dict | None = None,
 ) -> ScanResult:
     """Run a full scan of ``symbols``.
 
@@ -160,6 +179,8 @@ async def run_scan(
     ``breadth_symbols`` is the universe used for market breadth (default: ``symbols``);
     pass the full configured universe so a symbol's score does not depend on which
     other symbols happen to be scanned.
+    ``news_events`` (from :func:`bist_quant.news.pipeline.load_news_events`) enables
+    the news factor; with ``news.enabled`` but no events the factor is unavailable.
     """
     now = now or datetime.now(ISTANBUL_TZ)
     if as_of is not None:
@@ -235,8 +256,9 @@ async def run_scan(
         log, "market_regime", regime=regime.regime.value, date=str(regime.date), breadth_pct=breadth
     )
 
+    extras = _news_components(settings, symbols, features, index_bars, news_events, now, as_of)
     signals = [
-        evaluate_symbol(sym, features[sym], quality[sym], regime, settings)
+        evaluate_symbol(sym, features[sym], quality[sym], regime, settings, extras.get(sym))
         for sym in symbols
         if sym in features
     ]

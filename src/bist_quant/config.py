@@ -138,6 +138,82 @@ class ToggleSettings(BaseModel):
     enabled: bool = False
 
 
+class NewsDecaySettings(BaseModel):
+    mode: Literal["exponential", "step"] = "exponential"
+    half_life_hours: dict[str, float] = Field(
+        default_factory=lambda: {"short": 24.0, "medium": 72.0, "long": 168.0}
+    )
+    max_age_days: float = Field(10, gt=0)
+    step_table: list[tuple[float, float]] = Field(
+        default_factory=lambda: [(6, 1.0), (24, 0.7), (72, 0.4), (168, 0.15)]
+    )
+
+    @model_validator(mode="after")
+    def _check(self) -> NewsDecaySettings:
+        missing = {"short", "medium", "long"} - set(self.half_life_hours)
+        if missing:
+            raise ValueError(f"half_life_hours missing: {sorted(missing)}")
+        return self
+
+
+class NewsReactionSettings(BaseModel):
+    enabled: bool = True
+    window_sessions: int = Field(1, ge=1)
+    threshold_atr: float = Field(0.5, gt=0)
+    neutral_band: float = Field(0.1, ge=0)
+    confirm_multiplier: float = 1.2
+    no_reaction_multiplier: float = 0.5
+    contrary_multiplier: float = -0.5
+    infer_neutral: bool = True  # neutral-sentiment material news: sentiment from reaction
+    implied_max: float = Field(0.6, ge=0, le=1)
+    min_importance_for_inference: float = Field(0.5, ge=0, le=1)
+
+
+class NewsScaleSettings(BaseModel):
+    enabled: bool = True
+    reference_ratio: float = Field(0.01, gt=0)
+    sensitivity: float = Field(0.5, ge=0)
+    min_multiplier: float = Field(0.5, gt=0)
+    max_multiplier: float = Field(2.0, gt=0)
+
+
+class LlmSettings(BaseModel):
+    model: str = "claude-opus-5"
+    effort: Literal["low", "medium", "high", "xhigh", "max"] = "low"
+    max_text_chars: int = Field(6000, ge=500)
+    concurrency: int = Field(4, ge=1)
+    cache_dir: Path = Path("data/cache/llm")
+    use_fallbacks: bool = True
+
+
+class NewsSettings(BaseModel):
+    enabled: bool = True
+    classifier: Literal["rules", "claude", "hybrid"] = "rules"
+    source_quality: dict[str, float] = Field(default_factory=lambda: {"kap": 1.0})
+    session_close_time: str = "18:00"  # a disclosure after this belongs to the next session
+    cutoff_time: str = "18:15"  # news published up to this time counts for day T's signal
+    saturation: float = Field(0.6, gt=0)
+    min_importance: float = Field(0.05, ge=0, le=1)
+    fetch_details: bool = True
+    detail_event_types: list[str] = Field(
+        default_factory=lambda: [
+            "new_contract",
+            "government_contract",
+            "export_deal",
+            "investment",
+            "capacity_expansion",
+            "merger_acquisition",
+        ]
+    )
+    detail_max_per_run: int = Field(3000, ge=0)
+    kap_dir: Path = Path("data/raw/kap")
+    sync: bool = True
+    decay: NewsDecaySettings = Field(default_factory=NewsDecaySettings)
+    reaction: NewsReactionSettings = Field(default_factory=NewsReactionSettings)
+    scale: NewsScaleSettings = Field(default_factory=NewsScaleSettings)
+    llm: LlmSettings = Field(default_factory=LlmSettings)
+
+
 class FlowSettings(ToggleSettings):
     lookbacks: list[int] = Field(default_factory=lambda: [1, 3, 5, 10])
 
@@ -174,7 +250,7 @@ class ExitSettings(BaseModel):
 class BacktestSettings(BaseModel):
     start: date = date(2016, 1, 4)
     end: date | None = None
-    universe: str = "BIST30"
+    universe: str = "BIST100"
     warmup_days: int = Field(800, ge=300)
     initial_equity: float = Field(500_000, gt=0)
     entry_mode: Literal["zone_limit", "next_open"] = "zone_limit"
@@ -226,7 +302,7 @@ class ScoringSettings(BaseModel):
 
 
 class UniverseSettings(BaseModel):
-    mode: str = "BIST30"
+    mode: str = "BIST100"
     symbols: list[str] = Field(default_factory=list)
     lists: dict[str, list[str]] = Field(default_factory=dict)
     sectors: dict[str, str] = Field(default_factory=dict)
@@ -241,7 +317,7 @@ class Settings(BaseModel):
     strategy: StrategySettings = Field(default_factory=StrategySettings)
     risk: RiskSettings = Field(default_factory=RiskSettings)
     liquidity: LiquiditySettings = Field(default_factory=LiquiditySettings)
-    news: ToggleSettings = Field(default_factory=ToggleSettings)
+    news: NewsSettings = Field(default_factory=NewsSettings)
     institutional_flow: FlowSettings = Field(default_factory=FlowSettings)
     scoring: ScoringSettings = Field(default_factory=ScoringSettings)
     universe: UniverseSettings = Field(default_factory=UniverseSettings)

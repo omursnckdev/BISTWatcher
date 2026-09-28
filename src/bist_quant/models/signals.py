@@ -32,6 +32,7 @@ class ComponentScore(BaseModel):
     enabled: bool = True
     positive_factors: list[str] = Field(default_factory=list)
     negative_factors: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)  # neutral context (e.g. "no news")
 
     @property
     def ratio(self) -> float:
@@ -76,6 +77,7 @@ class RiskPlan(BaseModel):
 class Explanation(BaseModel):
     positive_factors: list[str] = Field(default_factory=list)
     negative_factors: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
     filters: list[str] = Field(default_factory=list)
 
 

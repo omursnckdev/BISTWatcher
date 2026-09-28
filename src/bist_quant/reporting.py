@@ -151,6 +151,7 @@ def format_detail(s: SignalResult) -> str:
     out.append("Reasons:")
     out += [f"  + {r}" for r in s.explanation.positive_factors]
     out += [f"  - {r}" for r in s.explanation.negative_factors]
+    out += [f"  · {r}" for r in s.explanation.notes]
     if s.explanation.filters:
         out.append("Filters:")
         out += [f"  ! {r}" for r in s.explanation.filters]

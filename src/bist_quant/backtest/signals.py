@@ -72,11 +72,28 @@ def regime_history(
 
 
 class Scorer:
-    """Scores the panel once per scoring configuration and caches the result."""
+    """Scores the panel once per scoring configuration and caches the result.
 
-    def __init__(self, cache: FeatureCache) -> None:
+    ``news_events`` (optional) feeds the news factor point-in-time: the score on
+    session *d* only sees disclosures published before *d*'s news cutoff.
+    """
+
+    def __init__(self, cache: FeatureCache, news_events: dict | None = None) -> None:
         self.cache = cache
+        self.news_events = news_events
         self._scored: dict[str, ScoredPanel] = {}
+
+    def news_book(self, settings: Settings):
+        if not settings.news.enabled or self.news_events is None:
+            return None
+        from bist_quant.news.pipeline import attach_reactions
+
+        return attach_reactions(
+            self.news_events,
+            self.cache.features(settings),
+            self.cache.history.index_bars["close"],
+            settings,
+        )
 
     def scored(self, settings: Settings) -> ScoredPanel:
         key = _key(
@@ -84,6 +101,7 @@ class Scorer:
             settings.scoring,
             settings.market_regime,
             settings.risk.resistance_lookback,
+            settings.news,
         )
         if key not in self._scored:
             self._scored[key] = self._score(settings)
@@ -96,15 +114,22 @@ class Scorer:
         regime = regime_history(
             self.cache.index_features(settings), breadth, settings, hist.start, hist.end
         )
+        book = self.news_book(settings)
+        news_weight = settings.scoring.weights.news
         scores: dict[str, pd.DataFrame] = {}
         for sym, f in features.items():
             window = f.loc[hist.start : hist.end]
             window = window[window.index.isin(regime.frame.index)]
             out = []
             for d, row in zip(window.index, window.to_dict("records"), strict=True):
-                score, comps = score_row(row, regime.components[d], settings)
+                extra = None
+                if book is not None:
+                    extra = {"news": book.component(sym, book.cutoff_for(d), news_weight)}
+                score, comps = score_row(row, regime.components[d], settings, extra)
                 rec = {"date": d, "score": score}
                 rec.update({c: comps[c].points for c in COMPONENTS})
+                if book is not None:
+                    rec["news"] = comps["news"].points
                 out.append(rec)
             if out:
                 scores[sym] = pd.DataFrame(out).set_index("date")

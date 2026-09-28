@@ -92,7 +92,9 @@ class YahooChartProvider:
     @staticmethod
     def ticker(symbol: str) -> str:
         symbol = symbol.upper()
-        return symbol if symbol.endswith(".IS") else f"{symbol}.IS"
+        if symbol.endswith(".IS") or "=" in symbol:  # FX pairs such as EURTRY=X pass through
+            return symbol
+        return f"{symbol}.IS"
 
     async def __aenter__(self) -> YahooChartProvider:
         return self

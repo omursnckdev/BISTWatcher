@@ -11,7 +11,7 @@ from bist_quant.backtest.metrics import (
     result_metrics,
     yearly_returns,
 )
-from bist_quant.backtest.research import ResearchResult
+from bist_quant.backtest.research import EventStudyResult, ResearchResult
 from bist_quant.backtest.walk_forward import WalkForwardResult
 
 BIAS_NOTE = (
@@ -191,4 +191,35 @@ def format_research(r: ResearchResult, horizons: list[int]) -> str:
             f"IC>0 on {row['positive_days_pct']:.0f}% of {int(row['days'])} days"
         )
     out += ["", BIAS_NOTE]
+    return "\n".join(out)
+
+
+def format_event_study(r: EventStudyResult, horizons: list[int]) -> str:
+    show = [h for h in horizons if h in (1, 5, 20)] or horizons[:3]
+
+    def table(df: pd.DataFrame, title: str, width: int) -> list[str]:
+        head = f"{title:<{width}}{'n':>6}" + "".join(
+            f"{f'xs{h}d%':>8}{f't{h}d':>7}{f'hit{h}d':>7}" for h in show
+        )
+        lines = [head, "-" * len(head)]
+        for key, row in df.iterrows():
+            label = " / ".join(key) if isinstance(key, tuple) else str(key)
+            lines.append(
+                f"{label[: width - 1]:<{width}}{int(row['count']):>6}"
+                + "".join(
+                    f"{_f(row[f'xs_{h}d_mean'], '{:+.2f}'):>8}{_f(row[f't_{h}d'], '{:+.1f}'):>7}"
+                    f"{_f(row[f'hit_{h}d_pct'], '{:.0f}'):>6}%"
+                    for h in show
+                )
+            )
+        return lines
+
+    out = [
+        "KAP EVENT STUDY (excess return vs XU100, from the next open; no costs)",
+        f"Events: {r.events:,}   t = mean / std * sqrt(n) (overlapping windows: optimistic)",
+        "",
+    ]
+    out += table(r.by_type, "Event type / tone (entry after news)", 42) + [""]
+    if len(r.by_reaction):
+        out += table(r.by_reaction, "Reaction (entry after reaction)", 42) + [""]
     return "\n".join(out)

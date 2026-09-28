@@ -10,6 +10,7 @@ direction. No costs are applied here - this measures raw predictive content.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 
 import numpy as np
 import pandas as pd
@@ -103,3 +104,94 @@ def run_research(ctx: BacktestContext, settings: Settings) -> ResearchResult:
         information_coefficient=pd.DataFrame(ic_rows).T,
         observations=len(panel),
     )
+
+
+# --------------------------------------------------------------------------- event study
+
+
+def _event_rows(ctx: BacktestContext, settings: Settings) -> pd.DataFrame:
+    """One row per (symbol, event) with forward excess returns after two entry points:
+
+    * ``news``: next open after the session whose news cutoff includes the event
+    * ``reaction``: next open after the price reaction became observable
+    """
+    book = ctx.scorer.news_book(settings)
+    if book is None:
+        return pd.DataFrame()
+    features = ctx.features_cache.features(settings)
+    idx = ctx.history.index_bars
+    horizons = settings.research.horizons
+    rows = []
+    for sym, events in book.events.items():
+        f = features.get(sym)
+        if f is None or len(f) < 3:
+            continue
+        dates = f.index
+        opens, closes = f["open"].to_numpy(float), f["close"].to_numpy(float)
+        b_open = idx["open"].reindex(dates).ffill().to_numpy(float)
+        b_close = idx["close"].reindex(dates).ffill().to_numpy(float)
+        for e in events:
+            cutoff_day = e.article.published_at.date()
+            if e.article.published_at.timetz().replace(tzinfo=None) > book.cutoff_time:
+                cutoff_day = cutoff_day + timedelta(days=1)
+            entries = {"news": int(dates.searchsorted(pd.Timestamp(cutoff_day))) + 1}
+            if e.reaction_known_at is not None:
+                k = int(dates.searchsorted(pd.Timestamp(e.reaction_known_at.date())))
+                entries["reaction"] = k + 1
+            c = e.classification
+            for kind, i in entries.items():
+                if i >= len(dates):
+                    continue
+                rec = {
+                    "symbol": sym,
+                    "kind": kind,
+                    "event_type": c.event_type.value,
+                    "sentiment": c.sentiment,
+                    "reaction": e.reaction or "n/a",
+                    "date": dates[i],
+                }
+                for h in horizons:
+                    j = i + h - 1
+                    if j < len(dates):
+                        stock = closes[j] / opens[i] - 1
+                        bench = b_close[j] / b_open[i] - 1
+                        rec[f"xs_{h}d"] = 100 * (stock - bench)
+                rows.append(rec)
+    return pd.DataFrame(rows)
+
+
+def _event_summary(df: pd.DataFrame, by: str | list[str], horizons: list[int]) -> pd.DataFrame:
+    g = df.groupby(by, observed=True)
+    out = {"count": g.size()}
+    for h in horizons:
+        col = f"xs_{h}d"
+        mean, std, n = g[col].mean(), g[col].std(ddof=1), g[col].count()
+        out[f"xs_{h}d_mean"] = mean
+        out[f"t_{h}d"] = mean / std * np.sqrt(n)
+        out[f"hit_{h}d_pct"] = g[col].apply(lambda s: 100 * (s.dropna() > 0).mean())
+    return pd.DataFrame(out)
+
+
+@dataclass
+class EventStudyResult:
+    by_type: pd.DataFrame  # event type x sentiment sign, entry after the news
+    by_reaction: pd.DataFrame  # news-vs-price reaction label, entry after the reaction
+    events: int
+
+
+def run_event_study(ctx: BacktestContext, settings: Settings) -> EventStudyResult | None:
+    df = _event_rows(ctx, settings)
+    if df.empty:
+        return None
+    horizons = settings.research.horizons
+    news = df[df["kind"] == "news"].copy()
+    news["tone"] = np.select(
+        [news["sentiment"] > 0.1, news["sentiment"] < -0.1], ["positive", "negative"], "neutral"
+    )
+    reaction = df[(df["kind"] == "reaction") & (df["reaction"] != "n/a")]
+    by_type = _event_summary(news, ["event_type", "tone"], horizons)
+    by_type = by_type[by_type["count"] >= 20].sort_values("count", ascending=False)
+    by_reaction = (
+        _event_summary(reaction, "reaction", horizons) if len(reaction) else pd.DataFrame()
+    )
+    return EventStudyResult(by_type, by_reaction, int(len(news)))

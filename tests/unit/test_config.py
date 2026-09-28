@@ -15,7 +15,8 @@ def test_default_config_loads(settings):
     assert settings.risk.atr_stop_multiplier == 2.0
     assert sum(settings.scoring.weights.model_dump().values()) == 100
     assert settings.data.provider in {"yahoo", "csv", "synthetic"}
-    assert not settings.news.enabled and not settings.institutional_flow.enabled
+    assert settings.news.enabled and not settings.institutional_flow.enabled
+    assert settings.news.classifier == "rules"
 
 
 def test_config_override_dir(tmp_path: Path):

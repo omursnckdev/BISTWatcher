@@ -27,10 +27,11 @@ class Classified:
 class BacktestContext:
     """Holds loaded history; memoises features, scores and signals per configuration."""
 
-    def __init__(self, history: HistoricalData) -> None:
+    def __init__(self, history: HistoricalData, news_events: dict | None = None) -> None:
         self.history = history
+        self.news_events = news_events
         self.features_cache = FeatureCache(history)
-        self.scorer = Scorer(self.features_cache)
+        self.scorer = Scorer(self.features_cache, news_events)
         self._classified: dict[str, Classified] = {}
 
     def scored(self, settings: Settings) -> ScoredPanel:
@@ -44,6 +45,7 @@ class BacktestContext:
             settings.strategy,
             settings.risk,
             settings.liquidity,
+            settings.news,
         )
         if key not in self._classified:
             signals, cands = classify_panel(

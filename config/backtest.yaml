@@ -4,7 +4,7 @@
 backtest:
   start: 2016-01-04          # first session that may generate a trade
   end: null                  # null = latest available session
-  universe: BIST30           # today's list => survivorship bias (see README)
+  universe: BIST100          # today's list => survivorship bias (see README)
   warmup_days: 800           # calendar days loaded before `start` for indicator warm-up
   initial_equity: 500000     # TRY
   # zone_limit: buy limit at (close_T + entry_zone_atr * ATR) on T+1; no fill if never reached
