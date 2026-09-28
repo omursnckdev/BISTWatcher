@@ -86,14 +86,29 @@ class KapClient:
     def __init__(
         self,
         timeout: float = 60.0,
-        concurrency: int = 3,
+        concurrency: int = 2,
         max_retries: int = 4,
         client: httpx.AsyncClient | None = None,
+        min_interval: float = 0.3,
     ) -> None:
         self._client = client or httpx.AsyncClient(timeout=timeout, headers=HEADERS)
         self._owns = client is None
         self._sem = asyncio.Semaphore(concurrency)
         self._retries = max_retries
+        # Politeness: minimum spacing between request starts (KAP drops bursts).
+        self._min_interval = min_interval
+        self._pace = asyncio.Lock()
+        self._last = 0.0
+
+    async def _wait_turn(self) -> None:
+        if self._min_interval <= 0:
+            return
+        async with self._pace:
+            loop = asyncio.get_running_loop()
+            delay = self._last + self._min_interval - loop.time()
+            if delay > 0:
+                await asyncio.sleep(delay)
+            self._last = loop.time()
 
     async def aclose(self) -> None:
         if self._owns:
@@ -103,6 +118,7 @@ class KapClient:
         last = "unknown"
         async with self._sem:
             for attempt in range(self._retries + 1):
+                await self._wait_turn()
                 try:
                     resp = await self._client.request(method, url, **kw)
                 except httpx.HTTPError as exc:
@@ -114,7 +130,7 @@ class KapClient:
                     if resp.status_code not in (429, 500, 502, 503, 504):
                         break
                 if attempt < self._retries:
-                    await asyncio.sleep(2**attempt)
+                    await asyncio.sleep(2 ** (attempt + 1))
         log_event(log, "kap_request_failed", level=30, url=url, error=last)
         raise KapError(f"KAP request failed: {url} ({last})")
 

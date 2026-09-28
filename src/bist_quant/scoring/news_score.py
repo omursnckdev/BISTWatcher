@@ -75,7 +75,6 @@ class NewsBook:
             if rc.enabled and known:
                 if (
                     ev.implied_sentiment is not None
-                    and rc.infer_neutral
                     and c.importance >= rc.min_importance_for_inference
                 ):
                     sentiment = ev.implied_sentiment

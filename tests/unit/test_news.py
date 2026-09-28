@@ -290,16 +290,38 @@ def test_reaction_labels_and_timing():
     label, mult, known, _ = up.evaluate(datetime(2026, 1, 2, 11, 0, tzinfo=TZ), 0.6)
     assert label is None or label  # Jan 2 close is 100 -> no move
     label, mult, known, _ = up.evaluate(datetime(2026, 1, 2, 19, 0, tzinfo=TZ), 0.6)
-    assert label == "POSITIVE_NEWS_POSITIVE_REACTION" and mult == cfg.confirm_multiplier
+    assert label == "POSITIVE_NEWS_POSITIVE_REACTION"
+    assert mult == cfg.multipliers["POSITIVE_NEWS_POSITIVE_REACTION"]
     assert known == datetime(2026, 1, 5, 18, 0, tzinfo=TZ)  # next session's close (Mon)
     flat = ReactionCalculator(_bars([100] * 5), bench, cfg, time(18, 0))
     label, mult, _, _ = flat.evaluate(datetime(2026, 1, 2, 19, 0, tzinfo=TZ), 0.6)
-    assert label == "POSITIVE_NEWS_NO_REACTION" and mult == cfg.no_reaction_multiplier
+    assert label == "POSITIVE_NEWS_NO_REACTION"
+    assert mult == cfg.multipliers["POSITIVE_NEWS_NO_REACTION"]
     down = ReactionCalculator(_bars([100, 100, 95, 95, 95]), bench, cfg, time(18, 0))
     label, mult, _, _ = down.evaluate(datetime(2026, 1, 2, 19, 0, tzinfo=TZ), 0.6)
     assert label == "POSITIVE_NEWS_NEGATIVE_REACTION" and mult < 0
     label, _, _, implied = down.evaluate(datetime(2026, 1, 2, 19, 0, tzinfo=TZ), 0.0)
     assert label == "NEUTRAL_NEWS_NEGATIVE_REACTION" and implied < 0
+    neg_only = cfg.model_copy(update={"infer_neutral": "negative"})
+    up_neg = ReactionCalculator(_bars([100, 100, 103, 103, 103]), bench, neg_only, time(18, 0))
+    assert up_neg.evaluate(datetime(2026, 1, 2, 19, 0, tzinfo=TZ), 0.0)[3] is None
+    both = cfg
+    up2 = ReactionCalculator(_bars([100, 100, 103, 103, 103]), bench, both, time(18, 0))
+    assert up2.evaluate(datetime(2026, 1, 2, 19, 0, tzinfo=TZ), 0.0)[3] > 0
+
+
+def test_sentiment_overrides():
+    from bist_quant.news.pipeline import apply_sentiment_override
+
+    over = {"capital_increase/positive": 0.0, "dividend": 0.0}
+    bonus = RuleBasedClassifier().classify_sync(
+        art("Sermaye Artırımı - Azaltımı İşlemlerine İlişkin Bildirim", "Bedelsiz")
+    )
+    rights = RuleBasedClassifier().classify_sync(
+        art("Sermaye Artırımı - Azaltımı İşlemlerine İlişkin Bildirim", "Bedelli")
+    )
+    assert apply_sentiment_override(bonus, over).sentiment == 0.0
+    assert apply_sentiment_override(rights, over).sentiment == rights.sentiment < 0
 
 
 def test_news_book_is_point_in_time():

@@ -215,7 +215,7 @@ def format_event_study(r: EventStudyResult, horizons: list[int]) -> str:
         return lines
 
     out = [
-        "KAP EVENT STUDY (excess return vs XU100, from the next open; no costs)",
+        "KAP EVENT STUDY (excess vs universe average, from the next open; no costs)",
         f"Events: {r.events:,}   t = mean / std * sqrt(n) (overlapping windows: optimistic)",
         "",
     ]

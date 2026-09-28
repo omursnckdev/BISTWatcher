@@ -140,6 +140,11 @@ def _parser() -> argparse.ArgumentParser:
     ks.add_argument("--symbols", nargs="+")
     ks.add_argument("--start", type=date.fromisoformat, metavar="YYYY-MM-DD")
     ks.add_argument("--end", type=date.fromisoformat, metavar="YYYY-MM-DD")
+    ks.add_argument(
+        "--details",
+        action="store_true",
+        help="also download disclosure texts for amount-bearing event types",
+    )
 
     nw = sub.add_parser("news", help="classified KAP events and the current news score")
     nw.add_argument("symbols", nargs="+")
@@ -314,6 +319,13 @@ def _kap_sync(settings: Settings, args: argparse.Namespace) -> int:
 
     stats = asyncio.run(run())
     print(f"KAP sync {start} -> {end} for {len(symbols)} symbols: {stats}")
+    if args.details:
+        from bist_quant.config import apply_overrides
+        from bist_quant.news.pipeline import load_news_events
+
+        big = apply_overrides(settings, {"news.detail_max_per_run": 1_000_000, "news.sync": False})
+        events = asyncio.run(load_news_events(big, symbols, start, end))
+        print(f"Disclosure texts up to date ({sum(len(v) for v in events.values())} events).")
     return 0
 
 

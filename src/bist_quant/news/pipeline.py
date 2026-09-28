@@ -29,6 +29,20 @@ log = get_logger(__name__)
 EUR_USD_FALLBACK = 1.08
 
 
+def apply_sentiment_override(
+    cls: NewsClassification, overrides: dict[str, float]
+) -> NewsClassification:
+    """Replace the sentiment by ``overrides["type/tone"]`` or ``overrides["type"]``."""
+    if not overrides:
+        return cls
+    tone = "positive" if cls.sentiment > 0 else "negative" if cls.sentiment < 0 else "neutral"
+    etype = cls.event_type.value
+    for key in (f"{etype}/{tone}", etype):
+        if key in overrides:
+            return cls.model_copy(update={"sentiment": float(overrides[key])})
+    return cls
+
+
 def build_classifier(settings: Settings) -> NewsClassifier:
     cfg = settings.news
     rules = RuleBasedClassifier()
@@ -222,21 +236,44 @@ def attach_reactions(
     benchmark_close: pd.Series,
     settings: Settings,
 ) -> NewsBook:
-    """Stage 2: add news-vs-price reactions (spec §24) and return a scoring-ready book."""
+    """Stage 2 (per settings): sentiment overrides + news-vs-price reactions (spec §24).
+
+    Works on copies, so the same loaded events can be scored under different settings
+    (sweeps, ablations) without leaking state between them.
+    """
     cfg = settings.news
     hh, mm = (int(x) for x in cfg.session_close_time.split(":"))
+    out: dict[str, list[NewsEvent]] = {}
     for sym, evs in events.items():
         f = features.get(sym)
-        if f is None or not cfg.reaction.enabled:
-            continue
-        calc = ReactionCalculator(f, benchmark_close, cfg.reaction, time(hh, mm))
+        calc = (
+            ReactionCalculator(f, benchmark_close, cfg.reaction, time(hh, mm))
+            if f is not None and cfg.reaction.enabled
+            else None
+        )
+        copies = []
         for e in evs:
-            label, mult, known_at, implied = calc.evaluate(
-                e.article.published_at, e.classification.sentiment
-            )
-            e.reaction, e.reaction_multiplier = label, mult
-            e.reaction_known_at, e.implied_sentiment = known_at, implied
-    return NewsBook(events, cfg)
+            cls = apply_sentiment_override(e.classification, cfg.sentiment_overrides)
+            update: dict = {
+                "classification": cls,
+                "reaction": None,
+                "reaction_multiplier": 1.0,
+                "reaction_known_at": None,
+                "implied_sentiment": None,
+            }
+            if calc is not None:
+                label, mult, known_at, implied = calc.evaluate(
+                    e.article.published_at, cls.sentiment
+                )
+                update.update(
+                    reaction=label,
+                    reaction_multiplier=mult,
+                    reaction_known_at=known_at,
+                    implied_sentiment=implied,
+                )
+            copies.append(e.model_copy(update=update))
+        out[sym] = copies
+    return NewsBook(out, cfg)
 
 
 def news_window(end: date, settings: Settings) -> tuple[date, date]:

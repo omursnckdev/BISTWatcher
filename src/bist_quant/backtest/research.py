@@ -109,8 +109,16 @@ def run_research(ctx: BacktestContext, settings: Settings) -> ResearchResult:
 # --------------------------------------------------------------------------- event study
 
 
+def _universe_forward(features: dict[str, pd.DataFrame], horizons: list[int]) -> dict:
+    """Equal-weight universe return from the open of day d to the close h-1 days later."""
+    opens = pd.DataFrame({s: f["open"] for s, f in features.items()})
+    closes = pd.DataFrame({s: f["close"] for s, f in features.items()})
+    return {h: (closes.shift(-(h - 1)) / opens - 1).mean(axis=1) for h in horizons}
+
+
 def _event_rows(ctx: BacktestContext, settings: Settings) -> pd.DataFrame:
-    """One row per (symbol, event) with forward excess returns after two entry points:
+    """One row per (symbol, event) with forward returns in excess of the equal-weight
+    universe (same entry day and horizon), after two entry points:
 
     * ``news``: next open after the session whose news cutoff includes the event
     * ``reaction``: next open after the price reaction became observable
@@ -119,8 +127,8 @@ def _event_rows(ctx: BacktestContext, settings: Settings) -> pd.DataFrame:
     if book is None:
         return pd.DataFrame()
     features = ctx.features_cache.features(settings)
-    idx = ctx.history.index_bars
     horizons = settings.research.horizons
+    universe = _universe_forward(features, horizons)
     rows = []
     for sym, events in book.events.items():
         f = features.get(sym)
@@ -128,8 +136,7 @@ def _event_rows(ctx: BacktestContext, settings: Settings) -> pd.DataFrame:
             continue
         dates = f.index
         opens, closes = f["open"].to_numpy(float), f["close"].to_numpy(float)
-        b_open = idx["open"].reindex(dates).ffill().to_numpy(float)
-        b_close = idx["close"].reindex(dates).ffill().to_numpy(float)
+        bench = {h: universe[h].reindex(dates).to_numpy(float) for h in horizons}
         for e in events:
             cutoff_day = e.article.published_at.date()
             if e.article.published_at.timetz().replace(tzinfo=None) > book.cutoff_time:
@@ -152,10 +159,9 @@ def _event_rows(ctx: BacktestContext, settings: Settings) -> pd.DataFrame:
                 }
                 for h in horizons:
                     j = i + h - 1
-                    if j < len(dates):
+                    if j < len(dates) and np.isfinite(bench[h][i]):
                         stock = closes[j] / opens[i] - 1
-                        bench = b_close[j] / b_open[i] - 1
-                        rec[f"xs_{h}d"] = 100 * (stock - bench)
+                        rec[f"xs_{h}d"] = 100 * (stock - bench[h][i])
                 rows.append(rec)
     return pd.DataFrame(rows)
 

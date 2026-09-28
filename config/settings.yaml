@@ -89,6 +89,11 @@ news:                         # Phase 3: KAP disclosures -> 0-15 news score
   # hybrid : rules for routine filings, LLM only for potentially material ones
   classifier: rules
   source_quality: {kap: 1.0}
+  # Sentiment overrides ("event_type/tone" or "event_type"), e.g. {dividend: 0.0}.
+  # Empty = the rule/LLM sentiment is used as is. An event-study-based set (neutralising
+  # bonus issues, insider trades, investment, dividend, M&A) did NOT improve the
+  # backtest - see docs/phase3_findings.md.
+  sentiment_overrides: {}
   session_close_time: "18:00" # disclosures after the close belong to the next session
   cutoff_time: "18:15"        # news published up to T 18:15 counts for T's signal
   saturation: 0.6             # net impact where the score is ~76% of the way to 0 / 15
@@ -96,7 +101,7 @@ news:                         # Phase 3: KAP disclosures -> 0-15 news score
   fetch_details: true         # download disclosure text for the types below (amounts, LLM)
   detail_event_types: [new_contract, government_contract, export_deal, investment,
                        capacity_expansion, merger_acquisition]
-  detail_max_per_run: 3000
+  detail_max_per_run: 200    # per scan/backtest; `kap-sync --details` backfills everything
   kap_dir: data/raw/kap
   sync: true                  # download missing KAP months before scanning/backtesting
   decay:
@@ -109,10 +114,15 @@ news:                         # Phase 3: KAP disclosures -> 0-15 news score
     window_sessions: 1
     threshold_atr: 0.5        # excess move vs XU100 beyond 0.5 ATR = a reaction
     neutral_band: 0.1
-    confirm_multiplier: 1.2   # good news + stock up (or bad news + stock down)
-    no_reaction_multiplier: 0.5
-    contrary_multiplier: -0.5 # good news + stock down => treated as weakness
-    infer_neutral: true       # neutral-sentiment material news (e.g. earnings): use reaction
+    # impact multiplier per news-vs-reaction label (spec section 24 hypotheses)
+    multipliers:
+      POSITIVE_NEWS_POSITIVE_REACTION: 1.2   # confirmation
+      POSITIVE_NEWS_NO_REACTION: 0.5         # good news ignored
+      POSITIVE_NEWS_NEGATIVE_REACTION: -0.5  # good news sold off => weakness
+      NEGATIVE_NEWS_NEGATIVE_REACTION: 1.2
+      NEGATIVE_NEWS_NO_REACTION: 0.5
+      NEGATIVE_NEWS_POSITIVE_REACTION: -0.5  # bad news bought => strength
+    infer_neutral: both       # off | negative | both: neutral news + reaction => sentiment
     implied_max: 0.6
     min_importance_for_inference: 0.5
   scale:                      # contract value vs market cap (spec section 23)

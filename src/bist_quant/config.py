@@ -161,10 +161,21 @@ class NewsReactionSettings(BaseModel):
     window_sessions: int = Field(1, ge=1)
     threshold_atr: float = Field(0.5, gt=0)
     neutral_band: float = Field(0.1, ge=0)
-    confirm_multiplier: float = 1.2
-    no_reaction_multiplier: float = 0.5
-    contrary_multiplier: float = -0.5
-    infer_neutral: bool = True  # neutral-sentiment material news: sentiment from reaction
+    # Impact multiplier per news-vs-reaction label (unlisted labels: 1.0). Defaults are the
+    # spec's a-priori hypotheses (they beat an event-study calibration in the portfolio
+    # backtest - see docs/phase3_findings.md).
+    multipliers: dict[str, float] = Field(
+        default_factory=lambda: {
+            "POSITIVE_NEWS_POSITIVE_REACTION": 1.2,
+            "POSITIVE_NEWS_NO_REACTION": 0.5,
+            "POSITIVE_NEWS_NEGATIVE_REACTION": -0.5,
+            "NEGATIVE_NEWS_NEGATIVE_REACTION": 1.2,
+            "NEGATIVE_NEWS_NO_REACTION": 0.5,
+            "NEGATIVE_NEWS_POSITIVE_REACTION": -0.5,
+        }
+    )
+    # Neutral-sentiment material news: take the sentiment from the price reaction.
+    infer_neutral: Literal["off", "negative", "both"] = "both"
     implied_max: float = Field(0.6, ge=0, le=1)
     min_importance_for_inference: float = Field(0.5, ge=0, le=1)
 
@@ -190,6 +201,9 @@ class NewsSettings(BaseModel):
     enabled: bool = True
     classifier: Literal["rules", "claude", "hybrid"] = "rules"
     source_quality: dict[str, float] = Field(default_factory=lambda: {"kap": 1.0})
+    # Sentiment overrides by "event_type/tone" or "event_type" (tone: positive|negative),
+    # applied after classification. Empty by default (see docs/phase3_findings.md).
+    sentiment_overrides: dict[str, float] = Field(default_factory=dict)
     session_close_time: str = "18:00"  # a disclosure after this belongs to the next session
     cutoff_time: str = "18:15"  # news published up to this time counts for day T's signal
     saturation: float = Field(0.6, gt=0)
@@ -205,7 +219,7 @@ class NewsSettings(BaseModel):
             "merger_acquisition",
         ]
     )
-    detail_max_per_run: int = Field(3000, ge=0)
+    detail_max_per_run: int = Field(200, ge=0)
     kap_dir: Path = Path("data/raw/kap")
     sync: bool = True
     decay: NewsDecaySettings = Field(default_factory=NewsDecaySettings)

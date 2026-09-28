@@ -71,12 +71,8 @@ class ReactionCalculator:
             news = NEG
         else:
             implied = float(np.clip(z / 3, -cfg.implied_max, cfg.implied_max))
+            if cfg.infer_neutral == "off" or (cfg.infer_neutral == "negative" and implied >= 0):
+                implied = None
             return f"NEUTRAL_NEWS_{move}_REACTION", 1.0, known_at, implied
         label = f"{news}_NEWS_{move}_REACTION"
-        if move == "NO":
-            mult = cfg.no_reaction_multiplier
-        elif move == news:
-            mult = cfg.confirm_multiplier
-        else:
-            mult = cfg.contrary_multiplier
-        return label, mult, known_at, None
+        return label, cfg.multipliers.get(label, 1.0), known_at, None
