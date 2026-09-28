@@ -1,0 +1,42 @@
+# Factor weights (points out of 100). Disabled factors (news / institutional_flow
+# in Phase 1) are excluded and the total is re-normalised to 0-100 over the
+# enabled factors when `renormalize_missing` is true.
+
+weights:
+  trend: 20
+  momentum: 15
+  volume: 10
+  relative_strength: 10
+  news: 15
+  institutional_flow: 15
+  market_regime: 10
+  volatility: 5
+
+renormalize_missing: true
+
+# Signal bands on the final 0-100 score (regime-specific BUY thresholds live in
+# settings.yaml -> strategy.buy_threshold).
+bands:
+  no_trade: [0, 49]
+  watch: [50, 64]
+  weak_setup: [65, 74]
+  buy_candidate: [75, 84]
+  strong_buy_candidate: [85, 100]
+
+rules:
+  adx_strong: 25
+  adx_emerging: 20
+  trend_persistence_window: 20
+  rsi_healthy: [45, 65]
+  rsi_strong: [65, 70]
+  rsi_overbought: 70
+  rsi_oversold: 30
+  momentum_persistence_window: 10
+  volume_ratio_levels: [1.2, 1.5, 2.0]
+  distribution_volume_ratio: 1.5
+  obv_ema_period: 20
+  ad_slope_window: 10
+  atr_pct_band: [1.5, 5.0]          # healthy ATR as % of price
+  max_extension_atr: 2.0            # close - EMA20 above this many ATRs = overextended
+  squeeze_lookback: 120
+  squeeze_percentile: 0.20

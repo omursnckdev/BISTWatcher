@@ -1,0 +1,83 @@
+# Runtime settings for the BIST Quant scanner (Phase 1: technical core).
+# Every parameter here is a starting hypothesis to be validated by backtesting,
+# not a tuned value.
+
+data:
+  provider: yahoo            # yahoo | csv | synthetic
+  history_days: 800          # calendar days requested; EMA200 needs >= ~300 sessions
+  raw_dir: data/raw          # raw source data is stored here (CSV per symbol)
+  cache_ttl_hours: 6         # re-use cached raw data younger than this
+  use_adjusted_prices: true  # indicators run on split/dividend-adjusted OHLC
+  exclude_incomplete_session: true  # drop today's bar while the BIST session is still open
+  session_close_time: "18:15"       # Europe/Istanbul; after this the daily bar is final
+  max_data_age_days: 5       # calendar days; older data => NO_TRADE (stale-data protection)
+  max_missing_sessions: 2    # sessions behind the index calendar => treated as suspended/stale
+  min_history_bars: 250      # fewer bars => symbol skipped (indicator warm-up)
+  request_concurrency: 4
+  request_timeout_seconds: 20
+  max_retries: 4
+
+indicators:
+  ema_fast: 20
+  ema_medium: 50
+  ema_long: 100
+  ema_slow: 200
+  rsi_period: 14
+  macd_fast: 12
+  macd_slow: 26
+  macd_signal: 9
+  bb_period: 20
+  bb_std: 2.0
+  atr_period: 14
+  adx_period: 14
+  volume_ma_period: 20
+  roc_period: 10
+  rs_windows: [5, 20, 60]
+
+market_regime:
+  index: XU100
+  secondary_index: XU030
+  high_vol_lookback: 252          # sessions used for the ATR% percentile
+  high_vol_percentile: 0.90       # ATR% above this percentile => HIGH_VOLATILITY ...
+  high_vol_min_ratio: 1.25        # ... and at least this multiple of its 1-year median
+  drawdown_lookback: 60
+  high_vol_drawdown_pct: 15.0     # index drawdown from rolling high => HIGH_VOLATILITY
+  breadth_healthy_pct: 50.0       # % of universe above EMA50 considered healthy
+  min_breadth_symbols: 10         # fewer fresh symbols => breadth is left out of the score
+
+strategy:
+  profile: SWING
+  # Minimum score for BUY_CANDIDATE depends on the market regime.
+  buy_threshold:
+    BULL: 75
+    NEUTRAL: 80
+    HIGH_VOLATILITY: 85
+    BEAR: 88
+  strong_buy_margin: 10       # STRONG_BUY_CANDIDATE = buy_threshold + margin
+  weak_setup_threshold: 65
+  watch_threshold: 50
+  block_buys_in_bear: false   # true => never emit BUY in a BEAR regime
+
+risk:
+  atr_stop_multiplier: 2.0
+  tp1_r: 1.5
+  tp2_r: 2.5
+  minimum_rr: 2.0
+  entry_zone_atr: 0.25        # entry zone = close +/- this * ATR
+  use_resistance_cap: true    # cap reward at overhead resistance when it sits below TP2
+  resistance_lookback: 120
+  portfolio_equity: 500000    # TRY
+  risk_per_trade_pct: 1.0
+  max_position_pct: 20.0      # cap a single position at this % of equity
+  lot_size: 1                 # BIST equities trade in 1-share lots
+
+liquidity:
+  min_avg_turnover_try: 50000000   # 20D average daily turnover (close * volume)
+  min_avg_volume: 100000
+
+news:
+  enabled: false              # Phase 3
+
+institutional_flow:
+  enabled: false              # Phase 4
+  lookbacks: [1, 3, 5, 10]

@@ -1,0 +1,178 @@
+# Stock universe. `mode` selects one of the named lists below, or CUSTOM to use
+# `symbols`. Index constituents change quarterly: these lists are a configured
+# snapshot and must be kept in sync with Borsa Istanbul's official announcements.
+# Note: symbols use plain BIST tickers (no ".IS" suffix).
+# Ticker changes already applied: KOZAL -> TRALT, KOZAA -> TRMET.
+
+mode: BIST30
+
+symbols:
+  - THYAO
+  - ASELS
+  - TUPRS
+  - BIMAS
+  - KCHOL
+
+lists:
+  BIST30:
+    - AKBNK
+    - ALARK
+    - ARCLK
+    - ASELS
+    - ASTOR
+    - BIMAS
+    - CCOLA
+    - EKGYO
+    - ENKAI
+    - EREGL
+    - FROTO
+    - GARAN
+    - GUBRF
+    - ISCTR
+    - KCHOL
+    - KRDMD
+    - MGROS
+    - PETKM
+    - PGSUS
+    - SAHOL
+    - SASA
+    - SISE
+    - TAVHL
+    - TCELL
+    - THYAO
+    - TOASO
+    - TRALT
+    - TTKOM
+    - TUPRS
+    - YKBNK
+
+  # BIST50 = BIST30 + the symbols below
+  BIST50_EXTRA:
+    - AEFES
+    - AKSA
+    - AKSEN
+    - BRSAN
+    - CIMSA
+    - DOAS
+    - DOHOL
+    - ENJSA
+    - HALKB
+    - HEKTS
+    - KONTR
+    - MAVI
+    - OYAKC
+    - SOKM
+    - TKFEN
+    - TRMET
+    - TSKB
+    - TTRAK
+    - ULKER
+    - VAKBN
+
+  # BIST100 = BIST50 + the symbols below
+  BIST100_EXTRA:
+    - AGHOL
+    - ALTNY
+    - ANSGR
+    - BALSU
+    - BERA
+    - BINHO
+    - BRYAT
+    - BSOKE
+    - BTCIM
+    - CANTE
+    - CLEBI
+    - CWENE
+    - DSTKF
+    - ECILC
+    - EFOR
+    - EGEEN
+    - ENERY
+    - EUPWR
+    - FENER
+    - GENIL
+    - GESAN
+    - GLRMK
+    - GRSEL
+    - GRTHO
+    - GSRAY
+    - ISMEN
+    - KCAER
+    - KONYA
+    - KTLEV
+    - LMKDC
+    - MAGEN
+    - MIATK
+    - MPARK
+    - OBAMS
+    - ODAS
+    - OTKAR
+    - PASEU
+    - PATEK
+    - QUAGR
+    - RALYH
+    - REEDR
+    - SAYAS
+    - SELEC
+    - SKBNK
+    - SMRTG
+    - TABGD
+    - TSPOR
+    - TURSG
+    - VESTL
+    - YEOTK
+    - ZOREN
+
+# Sector map (used later for sector relative strength / exposure limits).
+sectors:
+  AKBNK: banking
+  GARAN: banking
+  ISCTR: banking
+  YKBNK: banking
+  HALKB: banking
+  VAKBN: banking
+  TSKB: banking
+  SKBNK: banking
+  THYAO: transportation
+  PGSUS: transportation
+  TAVHL: transportation
+  CLEBI: transportation
+  ASELS: defense
+  OTKAR: defense
+  TUPRS: energy
+  PETKM: chemicals
+  AKSEN: energy
+  ENJSA: energy
+  ODAS: energy
+  ZOREN: energy
+  BIMAS: retail
+  MGROS: retail
+  SOKM: retail
+  MAVI: retail
+  KCHOL: holding
+  SAHOL: holding
+  ALARK: holding
+  DOHOL: holding
+  AGHOL: holding
+  EREGL: steel
+  KRDMD: steel
+  FROTO: automotive
+  TOASO: automotive
+  DOAS: automotive
+  TTRAK: automotive
+  TCELL: telecom
+  TTKOM: telecom
+  SISE: industrials
+  ARCLK: industrials
+  ASTOR: industrials
+  SASA: chemicals
+  GUBRF: chemicals
+  HEKTS: chemicals
+  AKSA: chemicals
+  EKGYO: real_estate
+  ENKAI: construction
+  CCOLA: food_beverage
+  AEFES: food_beverage
+  ULKER: food_beverage
+  TRALT: mining
+  TRMET: mining
