@@ -32,7 +32,7 @@ Market regime (XU100): HIGH_VOLATILITY  [regime score 2.0/10, breadth 23% above 
 Requires Python 3.11+ (3.12 recommended).
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv && source .venv/bin/activate   # Windows PowerShell: .venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
 
 python -m bist_quant scan                        # configured universe (BIST30), live Yahoo data
