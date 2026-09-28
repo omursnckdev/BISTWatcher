@@ -6,7 +6,6 @@ module only orchestrates the two and never talks to a vendor directly.
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
@@ -30,10 +29,9 @@ from bist_quant.models.signals import (
     SignalResult,
 )
 from bist_quant.regime.market_regime import classify_market, compute_index_features
-from bist_quant.risk.plan import build_risk_plan
-from bist_quant.scoring.composite_score import composite_score, score_components
-from bist_quant.strategy.entry import buy_threshold, classify_signal
-from bist_quant.strategy.filters import data_filter, liquidity_filter
+from bist_quant.strategy.entry import buy_threshold
+from bist_quant.strategy.evaluate import decide_row, score_row
+from bist_quant.strategy.filters import data_filter
 
 log = get_logger(__name__)
 
@@ -79,7 +77,7 @@ class ScanResult:
     index_features: pd.DataFrame | None = None
 
 
-def _prepare(
+def prepare_bars(
     raw: pd.DataFrame, symbol: str, settings: Settings, now: datetime | None
 ) -> tuple[pd.DataFrame, DataQualityReport]:
     bars, report = clean_bars(raw, symbol)
@@ -105,22 +103,11 @@ def evaluate_symbol(
 ) -> SignalResult:
     """Score the latest bar of ``features`` and classify the signal."""
     row = features.iloc[-1]
-    comps = score_components(row, settings, regime.score, extra_components)
-    score = composite_score(comps, settings.scoring.renormalize_missing)
-
-    atr_v = row.get("atr")
-    resistance = row.get("resistance")
-    plan = build_risk_plan(
-        float(row["close"]),
-        float(atr_v) if atr_v is not None else float("nan"),
-        settings.risk,
-        None if resistance is None or math.isnan(resistance) else float(resistance),
-    )
-    liquidity_ok, liq_notes = liquidity_filter(row, settings.liquidity)
+    score, comps = score_row(row, regime.score, settings, extra_components)
     data_ok, data_notes = data_filter(report)
-    signal, notes = classify_signal(
-        score, regime.regime, plan, liquidity_ok, data_ok, settings.strategy, settings.risk
-    )
+    decision = decide_row(row, score, comps, regime.regime, settings, data_ok)
+    plan, liquidity_ok, signal = decision.plan, decision.liquidity_ok, decision.signal
+    liq_notes, notes = decision.liquidity_notes, decision.notes
 
     explanation = Explanation(filters=data_notes + liq_notes + notes)
     for comp in comps.values():
@@ -190,7 +177,7 @@ async def run_scan(
             f"benchmark {index_symbol} unavailable: {errors.get(index_symbol, 'no data')}"
         )
 
-    index_bars, index_report = _prepare(frames.pop(index_symbol), index_symbol, settings, now)
+    index_bars, index_report = prepare_bars(frames.pop(index_symbol), index_symbol, settings, now)
     index_features = compute_index_features(index_bars, settings.indicators, settings.market_regime)
     calendar = index_bars.index
     index_report = check_freshness(
@@ -206,7 +193,7 @@ async def run_scan(
     for sym in to_fetch:
         if sym not in frames:
             continue
-        bars, report = _prepare(frames[sym], sym, settings, now)
+        bars, report = prepare_bars(frames[sym], sym, settings, now)
         report = check_freshness(
             report,
             bars,

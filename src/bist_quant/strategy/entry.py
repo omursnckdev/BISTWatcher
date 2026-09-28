@@ -12,7 +12,7 @@ from bist_quant.models.signals import MarketRegime, RiskPlan, SignalType
 
 
 def buy_threshold(regime: MarketRegime, cfg: StrategySettings) -> float:
-    return float(cfg.buy_threshold[regime])
+    return float(cfg.buy_threshold[regime]) + cfg.buy_threshold_offset
 
 
 def classify_signal(
@@ -56,7 +56,7 @@ def classify_signal(
         return SignalType.WEAK_SETUP, notes
 
     if score >= strategy.weak_setup_threshold:
-        if score >= min(strategy.buy_threshold.values()):
+        if score >= min(strategy.buy_threshold.values()) + strategy.buy_threshold_offset:
             notes.append(f"Score below the {regime.value} regime buy threshold ({threshold:.0f})")
         return SignalType.WEAK_SETUP, notes
     if score >= strategy.watch_threshold:

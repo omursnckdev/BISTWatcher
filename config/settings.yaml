@@ -53,6 +53,7 @@ strategy:
     NEUTRAL: 80
     HIGH_VOLATILITY: 85
     BEAR: 88
+  buy_threshold_offset: 0     # added to every regime threshold (used for robustness sweeps)
   strong_buy_margin: 10       # STRONG_BUY_CANDIDATE = buy_threshold + margin
   weak_setup_threshold: 65
   watch_threshold: 50
@@ -70,6 +71,10 @@ risk:
   risk_per_trade_pct: 1.0
   max_position_pct: 20.0      # cap a single position at this % of equity
   lot_size: 1                 # BIST equities trade in 1-share lots
+  # Portfolio-level limits (backtest now, paper trading later)
+  max_open_positions: 8
+  max_portfolio_risk_pct: 5.0     # sum of (entry - stop) * shares still at risk across positions
+  max_sector_exposure_pct: 25.0   # position value per sector (sectors from universe.yaml)
 
 liquidity:
   min_avg_turnover_try: 50000000   # 20D average daily turnover (close * volume)

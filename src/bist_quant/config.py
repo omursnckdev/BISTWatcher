@@ -8,8 +8,9 @@ seeded from a ``.env`` file) and are never stored in YAML.
 from __future__ import annotations
 
 import os
+from datetime import date
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -94,6 +95,7 @@ class StrategySettings(BaseModel):
             MarketRegime.BEAR: 88,
         }
     )
+    buy_threshold_offset: float = 0.0
     strong_buy_margin: float = Field(10, ge=0)
     weak_setup_threshold: float = 65
     watch_threshold: float = 50
@@ -122,6 +124,9 @@ class RiskSettings(BaseModel):
     risk_per_trade_pct: float = Field(1.0, gt=0, le=100)
     max_position_pct: float = Field(20.0, gt=0, le=100)
     lot_size: int = Field(1, ge=1)
+    max_open_positions: int = Field(8, ge=1)
+    max_portfolio_risk_pct: float = Field(5.0, gt=0, le=100)
+    max_sector_exposure_pct: float = Field(25.0, gt=0, le=100)
 
 
 class LiquiditySettings(BaseModel):
@@ -153,6 +158,45 @@ class Weights(BaseModel):
         if abs(total - 100) > 1e-6:
             raise ValueError(f"scoring weights must sum to 100, got {total}")
         return self
+
+
+class ExitSettings(BaseModel):
+    tp1_fraction: float = Field(0.5, ge=0, le=1)
+    breakeven_after_tp1: bool = True
+    trailing_stop: bool = False
+    trailing_atr_multiplier: float = Field(2.0, gt=0)
+    trend_exit: bool = True
+    time_stop_days: int = Field(10, ge=1)
+    time_stop_min_r: float = 0.5
+    max_holding_days: int = Field(20, ge=1)
+
+
+class BacktestSettings(BaseModel):
+    start: date = date(2016, 1, 4)
+    end: date | None = None
+    universe: str = "BIST30"
+    warmup_days: int = Field(800, ge=300)
+    initial_equity: float = Field(500_000, gt=0)
+    entry_mode: Literal["zone_limit", "next_open"] = "zone_limit"
+    commission_pct: float = Field(0.001, ge=0)
+    exchange_fee_pct: float = Field(0.00005, ge=0)
+    slippage_pct: float = Field(0.001, ge=0)
+    risk_free_rate_annual_pct: float = 0.0
+    cash_interest_annual_pct: float = 0.0
+    exits: ExitSettings = Field(default_factory=ExitSettings)
+
+
+class WalkForwardSettings(BaseModel):
+    train_years: int = Field(3, ge=1)
+    test_years: int = Field(1, ge=1)
+    objective: Literal["sharpe", "sortino", "cagr", "profit_factor", "expectancy_r"] = "sharpe"
+    min_trades: int = Field(20, ge=0)
+    grid: dict[str, list] = Field(default_factory=dict)
+
+
+class ResearchSettings(BaseModel):
+    horizons: list[int] = Field(default_factory=lambda: [1, 3, 5, 10, 20])
+    score_buckets: list[float] = Field(default_factory=lambda: [0, 50, 65, 75, 85, 100])
 
 
 class ScoringRules(BaseModel):
@@ -201,6 +245,9 @@ class Settings(BaseModel):
     institutional_flow: FlowSettings = Field(default_factory=FlowSettings)
     scoring: ScoringSettings = Field(default_factory=ScoringSettings)
     universe: UniverseSettings = Field(default_factory=UniverseSettings)
+    backtest: BacktestSettings = Field(default_factory=BacktestSettings)
+    walk_forward: WalkForwardSettings = Field(default_factory=WalkForwardSettings)
+    research: ResearchSettings = Field(default_factory=ResearchSettings)
     project_root: Path = PROJECT_ROOT
 
     def resolve_path(self, path: Path) -> Path:
@@ -230,15 +277,46 @@ def load_dotenv(path: Path) -> None:
         os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
-def load_settings(config_dir: Path | str | None = None) -> Settings:
-    """Load ``settings.yaml``, ``scoring.yaml`` and ``universe.yaml`` from ``config_dir``."""
+def load_settings(
+    config_dir: Path | str | None = None, overrides: dict[str, Any] | None = None
+) -> Settings:
+    """Load ``settings.yaml``, ``scoring.yaml``, ``universe.yaml`` and ``backtest.yaml``.
+
+    ``overrides`` maps dotted paths to values, e.g. ``{"risk.minimum_rr": 2.5}``.
+    """
     config_dir = Path(config_dir) if config_dir else DEFAULT_CONFIG_DIR
     load_dotenv(PROJECT_ROOT / ".env")
 
     raw = _read_yaml(config_dir / "settings.yaml")
     raw["scoring"] = _read_yaml(config_dir / "scoring.yaml")
     raw["universe"] = _read_yaml(config_dir / "universe.yaml")
-    return Settings.model_validate(raw)
+    raw.update(_read_yaml(config_dir / "backtest.yaml"))
+    settings = Settings.model_validate(raw)
+    return apply_overrides(settings, overrides) if overrides else settings
+
+
+def apply_overrides(settings: Settings, overrides: dict[str, Any]) -> Settings:
+    """Return a new, re-validated ``Settings`` with dotted-path ``overrides`` applied."""
+    data = settings.model_dump(mode="json")
+    for path, value in overrides.items():
+        node = data
+        *parents, leaf = path.split(".")
+        for key in parents:
+            if not isinstance(node.get(key), dict):
+                raise ValueError(f"unknown setting: {path}")
+            node = node[key]
+        if leaf not in node:
+            raise ValueError(f"unknown setting: {path}")
+        node[leaf] = value
+    return Settings.model_validate(data)
+
+
+def parse_override(text: str) -> tuple[str, Any]:
+    """Parse ``key.path=value`` (value parsed as YAML: numbers, booleans, lists)."""
+    if "=" not in text:
+        raise ValueError(f"expected key=value, got {text!r}")
+    key, value = text.split("=", 1)
+    return key.strip(), yaml.safe_load(value)
 
 
 def get_secret(name: str) -> str | None:

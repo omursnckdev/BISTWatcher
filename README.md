@@ -5,7 +5,8 @@ Every stock gets a transparent 0–100 score built from several independent fact
 a regime-aware signal classification, and a mandatory risk plan (entry zone, ATR stop,
 R-multiple targets, reward/risk, position size). No factor ever says "BUY" on its own.
 
-This repository implements **Phase 1 (technical core)** of
+This repository implements **Phase 1 (technical core)** and **Phase 2 (backtesting,
+walk-forward validation, factor research)** of
 [`BIST_Quant_Trading_Bot_Project_Spec.md`](BIST_Quant_Trading_Bot_Project_Spec.md).
 It generates signals only and never places orders.
 
@@ -45,6 +46,12 @@ python -m bist_quant analyze THYAO               # full explained breakdown
 python -m bist_quant regime                      # market regime only
 python -m bist_quant universe --universe BIST50  # list symbols
 python -m bist_quant scan --provider synthetic   # offline demo (fake data, clearly labelled)
+
+python -m bist_quant backtest                    # 2016 -> today, costs, benchmarks (backtest.yaml)
+python -m bist_quant backtest --universe BIST100 --set risk.use_resistance_cap=false
+python -m bist_quant sweep --grid "strategy.buy_threshold_offset=[-10,-5,0,5,10]"
+python -m bist_quant walkforward                 # choose params in-sample, test out-of-sample
+python -m bist_quant research                    # does the score predict forward returns?
 
 pytest                                           # unit + integration tests (offline)
 BIST_QUANT_NETWORK_TESTS=1 pytest -k live        # optional live Yahoo check
@@ -123,6 +130,37 @@ on which other symbols you scan.
 - **Reward/risk:** measured to TP2, or to overhead resistance when that sits between entry and TP2. Resistance is the highest high of the prior 120 sessions, excluding the last 5, so the current move doesn't count as resistance against itself.
 - **Position size:** risk 1% of equity (500,000 TRY default), capped at 20% of equity per position, rounded to whole lots.
 
+## Backtesting (Phase 2)
+
+`config/backtest.yaml` holds the period, universe, costs, exit rules and walk-forward grid.
+Any setting can be overridden per run with `--set dotted.path=value`.
+
+**Timing.** Signals use data up to the close of session T. Orders fill during T+1:
+- `zone_limit` (default): a buy limit at close + 0.25 ATR. It fills at the open if the open is at or below the limit, otherwise at the limit if the low reaches it; if neither, the order expires.
+- `next_open`: a market buy at the open.
+
+A test checks that trades closed before a cut-off date are identical whether or not later data exists.
+
+**Exits**, checked in this order each session:
+1. An exit decided at the previous close executes at the open.
+2. A gap through the stop or a target at the open fills at the open price.
+3. Intraday stop, then TP1 (sell 50%, move the stop to breakeven), then TP2. When a bar touches both the stop and a target, the stop is assumed to fill first.
+4. At the close: a trend-failure exit (close < EMA20 and MACD < signal), a time stop (no +0.5R after 10 sessions), or the 20-session maximum hold is decided and executed at the next open.
+
+An optional ATR trailing stop is also available.
+
+**Costs.** Every fill pays commission (0.10%), exchange fee (0.005%) and slippage (0.10%) per side, all configurable.
+
+**Portfolio.** 1% risk per trade on current equity. Limits: at most 8 positions, 20% of equity per position, 5% total capital at risk, 25% per sector. No leverage. Idle cash earns `cash_interest_annual_pct` (default 0).
+
+**Reports.**
+- **`backtest`:** all spec metrics (trades, win/loss, average winner/loser, profit factor, expectancy in R and TRY, max drawdown and duration, Sharpe, Sortino, CAGR, exposure, holding period, best/worst trade, recovery factor, costs). Also exit-reason and regime breakdowns, year-by-year returns, and XU100 / XU030 / equal-weight benchmarks. `--trades` and `--equity` export CSVs.
+- **`sweep`:** the same period for every parameter combination, as a robustness check.
+- **`walkforward`:** rolling 3-year train / 1-year test windows. The best parameter set in-sample (by Sharpe, with a minimum trade count) is tested on the next unseen year, and the out-of-sample years are chained together.
+- **`research`:** forward returns (next open to close at +1/3/5/10/20 sessions) by score bucket, signal and regime, raw and in excess of the universe average, plus a daily rank information coefficient with a t-stat. No costs are applied here, so this measures predictive content only.
+
+Everything runs through the same `strategy/evaluate.py` code the scanner uses.
+
 ## Configuration
 
 | File | Contents |
@@ -130,6 +168,7 @@ on which other symbols you scan.
 | `config/settings.yaml` | data provider and cache, indicator periods, regime rules, thresholds, risk, liquidity |
 | `config/scoring.yaml` | factor weights (must sum to 100), rubric thresholds, bands |
 | `config/universe.yaml` | mode (`BIST30`, `BIST50`, `BIST100`, `CUSTOM`), symbol lists, sector map |
+| `config/backtest.yaml` | backtest period, costs, entry mode, exits, walk-forward grid, research horizons |
 | `.env` (copy `.env.example`) | credentials and `LOG_LEVEL`. Phase 1 needs no keys |
 
 Everything is validated by Pydantic at start-up. Invalid values (for example, weights not
@@ -177,6 +216,9 @@ src/bist_quant/
   scoring/              technical_score.py, composite_score.py
   strategy/             entry.py (classification), filters.py (liquidity, stale data)
   risk/                 stop_loss, take_profit, position_size, plan
+  strategy/evaluate.py  one row -> score -> signal (shared by scanner and backtest)
+  backtest/             data, signals, engine, metrics, runner (sweep), walk_forward,
+                        research, report
 tests/unit, tests/integration
 data/raw, data/processed, data/cache   (git-ignored)
 ```
@@ -186,8 +228,8 @@ data/raw, data/processed, data/cache   (git-ignored)
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | Technical scanner, regime, scoring, risk plan, CLI, tests | ✅ this repo |
-| 2 | Backtesting: costs, stops/targets, metrics, benchmarks, walk-forward | next |
-| 3 | News & KAP ingestion, LLM classification (metadata only), decay, news score | planned |
+| 2 | Backtesting: costs, stops/targets, metrics, benchmarks, walk-forward, factor research | ✅ |
+| 3 | News & KAP ingestion, LLM classification (metadata only), decay, news score | next |
 | 4 | Broker/institutional flow (incl. BofA), custody data, flow score | planned |
 | 5 | Composite model, ablation, out-of-sample validation | planned |
 | 6–8 | Dashboard, paper trading, optional broker execution | planned |

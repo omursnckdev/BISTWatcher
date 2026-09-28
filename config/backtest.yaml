@@ -1,0 +1,39 @@
+# Phase 2: backtesting, walk-forward validation and factor research.
+# Costs are placeholders: set them to your broker's actual conditions.
+
+backtest:
+  start: 2016-01-04          # first session that may generate a trade
+  end: null                  # null = latest available session
+  universe: BIST30           # today's list => survivorship bias (see README)
+  warmup_days: 800           # calendar days loaded before `start` for indicator warm-up
+  initial_equity: 500000     # TRY
+  # zone_limit: buy limit at (close_T + entry_zone_atr * ATR) on T+1; no fill if never reached
+  # next_open:  market buy at the T+1 open
+  entry_mode: zone_limit
+  commission_pct: 0.001      # per side, fraction of notional (0.1%)
+  exchange_fee_pct: 0.00005  # per side
+  slippage_pct: 0.001        # per side, applied against us on every fill
+  risk_free_rate_annual_pct: 0.0   # for Sharpe/Sortino (TRY deposit rates are far from 0!)
+  cash_interest_annual_pct: 0.0    # interest earned on idle cash (e.g. money-market fund)
+  exits:
+    tp1_fraction: 0.5        # share of the position sold at TP1
+    breakeven_after_tp1: true
+    trailing_stop: false     # ATR trailing stop on the remainder
+    trailing_atr_multiplier: 2.0
+    trend_exit: true         # close < EMA20 and MACD < signal => exit next open
+    time_stop_days: 10       # after N sessions ...
+    time_stop_min_r: 0.5     # ... exit if the close is not at least entry + 0.5R
+    max_holding_days: 20     # hard cap for the swing horizon
+
+walk_forward:
+  train_years: 3
+  test_years: 1
+  objective: sharpe          # sharpe | sortino | cagr | profit_factor | expectancy_r
+  min_trades: 20             # parameter sets with fewer in-sample trades are ignored
+  grid:                      # dotted setting path -> candidate values
+    strategy.buy_threshold_offset: [-5, 0, 5]
+    risk.use_resistance_cap: [true, false]
+
+research:
+  horizons: [1, 3, 5, 10, 20]
+  score_buckets: [0, 50, 65, 75, 85, 100]

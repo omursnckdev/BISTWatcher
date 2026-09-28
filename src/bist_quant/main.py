@@ -10,6 +10,12 @@ Examples::
     python -m bist_quant analyze THYAO
     python -m bist_quant regime
     python -m bist_quant universe --universe BIST50
+
+    python -m bist_quant backtest --universe BIST30 --start 2018-01-01
+    python -m bist_quant backtest --set risk.use_resistance_cap=false --trades trades.csv
+    python -m bist_quant sweep --grid strategy.buy_threshold_offset=[-10,-5,0,5]
+    python -m bist_quant walkforward
+    python -m bist_quant research
 """
 
 from __future__ import annotations
@@ -21,7 +27,7 @@ from datetime import date
 from pathlib import Path
 
 from bist_quant import __version__
-from bist_quant.config import Settings, load_settings
+from bist_quant.config import Settings, apply_overrides, load_settings, parse_override
 from bist_quant.data.market_data import CachingProvider, MarketDataProvider, build_provider
 from bist_quant.data.universe import load_universe, normalize_symbol
 from bist_quant.logging import configure_logging
@@ -84,6 +90,43 @@ def _parser() -> argparse.ArgumentParser:
 
     uni = sub.add_parser("universe", help="list the symbols of a universe")
     uni.add_argument("--universe")
+
+    def bt_args(sp: argparse.ArgumentParser) -> None:
+        sp.add_argument("--provider", choices=["yahoo", "csv", "synthetic"])
+        sp.add_argument("--refresh", action="store_true", help="ignore the raw-data cache")
+        sp.add_argument("--universe", help="default: backtest.universe from backtest.yaml")
+        sp.add_argument("--symbols", nargs="+", help="explicit symbols (overrides --universe)")
+        sp.add_argument("--start", type=date.fromisoformat, metavar="YYYY-MM-DD")
+        sp.add_argument("--end", type=date.fromisoformat, metavar="YYYY-MM-DD")
+        sp.add_argument(
+            "--set",
+            action="append",
+            default=[],
+            metavar="KEY=VALUE",
+            help="override a setting, e.g. --set risk.minimum_rr=2.5 (repeatable)",
+        )
+
+    bt = sub.add_parser("backtest", help="historical simulation with costs and benchmarks")
+    bt_args(bt)
+    bt.add_argument("--trades", type=Path, metavar="CSV", help="write the trade list")
+    bt.add_argument("--equity", type=Path, metavar="CSV", help="write daily equity/benchmarks")
+
+    sw = sub.add_parser("sweep", help="compare parameter combinations over the same period")
+    bt_args(sw)
+    sw.add_argument(
+        "--grid",
+        action="append",
+        default=[],
+        metavar="KEY=[V1,V2]",
+        help="parameter values to combine (default: walk_forward.grid)",
+    )
+    sw.add_argument("--csv", type=Path, help="write the sweep table")
+
+    wf = sub.add_parser("walkforward", help="walk-forward parameter selection and OOS test")
+    bt_args(wf)
+
+    rs = sub.add_parser("research", help="forward returns by score bucket / signal / regime")
+    bt_args(rs)
     return p
 
 
@@ -110,6 +153,89 @@ async def _scan(
             await inner.aclose()
 
 
+async def _history(settings: Settings, symbols: list[str], args: argparse.Namespace):
+    from bist_quant.backtest.data import load_history
+
+    provider = _provider(settings, args)
+    try:
+        return await load_history(settings, symbols, provider, args.start, args.end)
+    finally:
+        inner = getattr(provider, "inner", provider)
+        if hasattr(inner, "aclose"):
+            await inner.aclose()
+
+
+def _research_commands(settings: Settings, args: argparse.Namespace) -> int:
+    from bist_quant.backtest.report import (
+        format_backtest,
+        format_research,
+        format_sweep,
+        format_walk_forward,
+    )
+    from bist_quant.backtest.research import run_research
+    from bist_quant.backtest.runner import BacktestContext, sweep
+    from bist_quant.backtest.walk_forward import walk_forward
+
+    if args.set:
+        settings = apply_overrides(settings, dict(parse_override(x) for x in args.set))
+    universe_name = (args.universe or settings.backtest.universe).upper()
+    if args.symbols:
+        symbols = [normalize_symbol(s) for s in args.symbols]
+        universe_name = "CUSTOM"
+    else:
+        symbols = load_universe(settings.universe, universe_name)
+    print(f"Loading {len(symbols)} symbols + benchmarks ...", file=sys.stderr)
+    history = asyncio.run(_history(settings, symbols, args))
+    ctx = BacktestContext(history)
+    print("Scoring history ...", file=sys.stderr)
+    initial = settings.backtest.initial_equity
+
+    if args.command == "backtest":
+        result = ctx.run(settings)
+        if not len(result.equity):
+            print("No sessions to simulate in the requested period.", file=sys.stderr)
+            return 1
+        benches = ctx.benchmarks(result.equity.index, initial)
+        print(format_backtest(result, benches, universe_name, len(history.bars)))
+        if history.skipped:
+            print("Skipped: " + "; ".join(f"{k} ({v})" for k, v in history.skipped.items()))
+        if args.trades:
+            result.trades_frame().to_csv(args.trades, index=False)
+            print(f"Trades written to {args.trades}")
+        if args.equity:
+            import pandas as pd
+
+            pd.DataFrame({"strategy": result.equity, **benches}).to_csv(args.equity)
+            print(f"Equity curves written to {args.equity}")
+        return 0
+
+    if args.command == "sweep":
+        grid = (
+            dict(parse_override(x) for x in args.grid) if args.grid else settings.walk_forward.grid
+        )
+        for key, values in grid.items():
+            if not isinstance(values, list):
+                grid[key] = [values]
+        table = sweep(ctx, settings, grid)
+        print(format_sweep(table, list(grid)))
+        if args.csv:
+            table.to_csv(args.csv, index=False)
+        return 0
+
+    if args.command == "walkforward":
+        result = walk_forward(ctx, settings)
+        if not result.folds:
+            print("Period too short for the configured train/test windows.", file=sys.stderr)
+            return 1
+        benches = ctx.benchmarks(result.oos_equity.index, initial)
+        print(format_walk_forward(result, benches))
+        return 0
+
+    research = run_research(ctx, settings)
+    print(format_research(research, settings.research.horizons))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     configure_logging("INFO" if args.verbose else None)
@@ -118,6 +244,16 @@ def main(argv: list[str] | None = None) -> int:
     except (ValueError, OSError) as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 2
+
+    if args.command in {"backtest", "sweep", "walkforward", "research"}:
+        try:
+            return _research_commands(settings, args)
+        except ScanError as exc:
+            print(f"Backtest failed: {exc}", file=sys.stderr)
+            return 1
+        except ValueError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 2
 
     try:
         if args.command == "universe":
