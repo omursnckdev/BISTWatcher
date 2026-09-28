@@ -1,0 +1,13 @@
+# Example selection, NOT an authoritative current BIST30 membership list.
+symbols = ["THYAO", "ASELS", "TUPRS", "BIMAS", "KCHOL"]
+benchmark = "XU100"
+minimum_history = 250
+max_age_days = 5
+minimum_turnover = 50000000.0
+equity = 500000.0
+risk_fraction = 0.01
+max_position_fraction = 0.20
+atr_stop_multiplier = 2.0
+tp1_r = 1.5
+tp2_r = 2.5
+minimum_rr = 2.0

@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bistwatcher"
+version = "0.1.0"
+description = "Explainable daily BIST technical research scanner"
+requires-python = ">=3.12"
+dependencies = ["numpy>=1.26,<3", "pandas>=2.2,<3"]
+
+[project.scripts]
+bistwatcher = "bist_quant.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
