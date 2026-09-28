@@ -63,11 +63,20 @@ def _summary(panel: pd.DataFrame, by: str | pd.Series, horizons: list[int]) -> p
     return pd.DataFrame(out)
 
 
+def _rank_corr(g: pd.DataFrame, col: str) -> float:
+    """Pearson correlation of ranks; NaN when undefined (few rows or a constant column)."""
+    if len(g) < 5:
+        return np.nan
+    a = g["score"].to_numpy(float) - g["score"].mean()
+    b = g[col].to_numpy(float) - g[col].mean()
+    denom = np.sqrt((a * a).sum() * (b * b).sum())
+    return float((a * b).sum() / denom) if denom > 0 else np.nan
+
+
 def _daily_rank_ic(panel: pd.DataFrame, col: str) -> pd.Series:
     df = panel[["score", col]].dropna()
     ranks = df.groupby(level="date").rank()
-    joined = ranks.groupby(level="date")
-    return joined.apply(lambda g: g["score"].corr(g[col]) if len(g) >= 5 else np.nan).dropna()
+    return ranks.groupby(level="date").apply(_rank_corr, col).dropna()
 
 
 def run_research(ctx: BacktestContext, settings: Settings) -> ResearchResult:

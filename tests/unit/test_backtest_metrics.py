@@ -64,3 +64,20 @@ def test_make_folds():
     assert folds[0][2] == pd.Timestamp("2019-01-01")
     assert folds[-1][3] == pd.Timestamp("2021-06-30")
     assert all(f[1] < f[2] for f in folds)
+
+
+def test_rank_ic_handles_constant_days():
+    import warnings
+
+    from bist_quant.backtest.research import _daily_rank_ic
+
+    days = pd.to_datetime(["2024-01-02"] * 6 + ["2024-01-03"] * 6)
+    panel = pd.DataFrame(
+        {"score": [1, 2, 3, 4, 5, 6] * 2, "fwd_5d": [1, 2, 3, 4, 5, 6] + [0.0] * 6},
+        index=pd.Index(days, name="date"),
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        ic = _daily_rank_ic(panel, "fwd_5d")
+    assert list(ic.index) == [pd.Timestamp("2024-01-02")]  # constant day dropped silently
+    assert ic.iloc[0] == pytest.approx(1.0)
