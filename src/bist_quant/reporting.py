@@ -25,6 +25,7 @@ _SHORT = {
     "momentum": "MOM",
     "volume": "VOL",
     "relative_strength": "RS",
+    "news": "NEWS",
     "market_regime": "REG",
     "volatility": "VLTY",
 }
