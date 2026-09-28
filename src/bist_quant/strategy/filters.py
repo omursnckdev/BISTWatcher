@@ -21,7 +21,7 @@ def liquidity_filter(row: Mapping, cfg: LiquiditySettings) -> tuple[bool, list[s
         reasons.append(
             f"Illiquid: 20D avg turnover {shown} TRY < {cfg.min_avg_turnover_try / 1e6:,.0f}M"
         )
-    if volume is None or math.isnan(volume) or volume < cfg.min_avg_volume:
+    if cfg.min_avg_volume and (volume is None or math.isnan(volume) or volume < cfg.min_avg_volume):
         ok = False
         reasons.append(f"Illiquid: 20D avg volume below {cfg.min_avg_volume:,.0f} shares")
     return ok, reasons

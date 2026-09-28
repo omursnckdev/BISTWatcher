@@ -126,7 +126,7 @@ class RiskSettings(BaseModel):
 
 class LiquiditySettings(BaseModel):
     min_avg_turnover_try: float = Field(50_000_000, ge=0)
-    min_avg_volume: float = Field(100_000, ge=0)
+    min_avg_volume: float = Field(0, ge=0)
 
 
 class ToggleSettings(BaseModel):

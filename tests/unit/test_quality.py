@@ -85,3 +85,6 @@ def test_liquidity_filter():
     assert not ok and "turnover" in reasons[0]
     assert not liquidity_filter({"avg_turnover": float("nan"), "avg_volume": 2e6}, cfg)[0]
     assert not liquidity_filter({"avg_turnover": 80e6, "avg_volume": 10}, cfg)[0]
+    # Default: turnover only, so a high-priced stock with few shares traded passes.
+    default = LiquiditySettings()
+    assert liquidity_filter({"avg_turnover": 237e6, "avg_volume": 41_573}, default)[0]

@@ -58,6 +58,15 @@ def format_header(result: ScanResult) -> str:
     )
 
 
+def _signal_label(s: SignalResult) -> str:
+    """Signal text for the table; a filtered NO_TRADE says why."""
+    if not s.data_ok:
+        return f"{s.signal.value} (stale)"
+    if not s.liquidity_ok:
+        return f"{s.signal.value} (illiquid)"
+    return s.signal.value
+
+
 def format_table(result: ScanResult, top: int | None = None) -> str:
     rows = result.signals[:top] if top else result.signals
     comp_keys = [k for k in _SHORT if rows and rows[0].components[k].enabled]
@@ -68,7 +77,7 @@ def format_table(result: ScanResult, top: int | None = None) -> str:
         rr = f"{s.risk.risk_reward:.1f}" if s.risk else "-"
         comps = " ".join(f"{s.components[k].points:5.1f}" for k in comp_keys)
         out.append(
-            f"{i:>3}  {s.symbol:<7} {s.score:5.1f}  {s.signal.value:<21} "
+            f"{i:>3}  {s.symbol:<7} {s.score:5.1f}  {_signal_label(s):<21} "
             f"{_fmt_price(s.close):>10} {rr:>5}  {comps}"
         )
     counts = pd.Series([s.signal.value for s in result.signals]).value_counts()

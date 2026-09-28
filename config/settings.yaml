@@ -73,7 +73,9 @@ risk:
 
 liquidity:
   min_avg_turnover_try: 50000000   # 20D average daily turnover (close * volume)
-  min_avg_volume: 100000
+  # Share-count minimum. 0 = off: a share count means nothing across price levels
+  # (a 5,000 TRY stock trading 40k shares/day is ~200M TRY of turnover).
+  min_avg_volume: 0
 
 news:
   enabled: false              # Phase 3
