@@ -17,11 +17,11 @@ renormalize_missing: true
 # Signal bands on the final 0-100 score (regime-specific BUY thresholds live in
 # settings.yaml -> strategy.buy_threshold).
 bands:
-  no_trade: [0, 49]
-  watch: [50, 64]
-  weak_setup: [65, 74]
-  buy_candidate: [75, 84]
-  strong_buy_candidate: [85, 100]
+  no_trade: [0, 44]
+  watch: [45, 54]
+  weak_setup: [55, 64]
+  buy_candidate: [65, 74]
+  strong_buy_candidate: [75, 100]
 
 rules:
   adx_strong: 25

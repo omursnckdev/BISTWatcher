@@ -1,21 +1,22 @@
 """Command-line interface.
 
-Examples::
+Examples (English command names work too: scan, analyze, regime, ...)::
 
-    python -m bist_quant scan                       # configured universe (BIST30)
-    python -m bist_quant scan --universe BIST100 --top 20
-    python -m bist_quant scan --symbols THYAO ASELS --detail
-    python -m bist_quant scan --provider synthetic  # offline demo data
-    python -m bist_quant scan --as-of 2025-06-30    # replay using data <= that date
-    python -m bist_quant analyze THYAO
-    python -m bist_quant regime
-    python -m bist_quant universe --universe BIST50
+    python -m bist_quant tara                        # configured universe (BIST30)
+    python -m bist_quant tara --evren BIST100 --ilk 20
+    python -m bist_quant tara --semboller THYAO ASELS --detay
+    python -m bist_quant tara --kaynak synthetic     # offline demo data
+    python -m bist_quant tara --tarih 2025-06-30     # replay using data <= that date
+    python -m bist_quant tara --alim-esigi 60        # looser BUY thresholds for one run
+    python -m bist_quant analiz THYAO
+    python -m bist_quant piyasa
+    python -m bist_quant evren --evren BIST50
 
-    python -m bist_quant backtest --universe BIST30 --start 2018-01-01
-    python -m bist_quant backtest --set risk.use_resistance_cap=false --trades trades.csv
-    python -m bist_quant sweep --grid strategy.buy_threshold_offset=[-10,-5,0,5]
-    python -m bist_quant walkforward
-    python -m bist_quant research
+    python -m bist_quant geritest --evren BIST30 --baslangic 2018-01-01
+    python -m bist_quant geritest --ayarla risk.use_resistance_cap=false --islemler trades.csv
+    python -m bist_quant parametre-tara --izgara strategy.buy_threshold_offset=[-10,-5,0,5]
+    python -m bist_quant ileri-test
+    python -m bist_quant arastirma
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ from bist_quant.data.market_data import (
 )
 from bist_quant.data.universe import load_universe, normalize_symbol
 from bist_quant.logging import configure_logging
-from bist_quant.models.signals import SignalType
+from bist_quant.models.signals import MarketRegime, SignalType
 from bist_quant.reporting import (
     SIGNAL_RANK,
     format_detail,
@@ -47,110 +48,260 @@ from bist_quant.reporting import (
 )
 from bist_quant.scanner import ScanError, ScanResult, run_scan
 
+# Turkish command names; the English names keep working as aliases.
+COMMANDS = {
+    "tara": "scan",
+    "analiz": "analyze",
+    "piyasa": "regime",
+    "evren": "universe",
+    "geritest": "backtest",
+    "parametre-tara": "sweep",
+    "ileri-test": "walkforward",
+    "arastirma": "research",
+    "kap-indir": "kap-sync",
+    "haber": "news",
+}
+_CANONICAL = {**COMMANDS, **{en: en for en in COMMANDS.values()}}
+
 
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="bist_quant", description="Explainable BIST swing-trading scanner and research tool."
+        prog="bist_quant",
+        description="Açıklanabilir BIST swing tarayıcısı ve araştırma aracı. "
+        "Komut ve seçeneklerin İngilizce adları da çalışır.",
     )
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    p.add_argument("--config-dir", type=Path, help="directory containing the YAML config files")
-    p.add_argument("-v", "--verbose", action="store_true", help="structured INFO logs on stderr")
-    sub = p.add_subparsers(dest="command", required=True)
+    p.add_argument(
+        "--ayar-dizini",
+        "--config-dir",
+        dest="config_dir",
+        type=Path,
+        metavar="DİZİN",
+        help="YAML ayar dosyalarının bulunduğu dizin",
+    )
+    p.add_argument(
+        "-v",
+        "--ayrintili",
+        "--verbose",
+        dest="verbose",
+        action="store_true",
+        help="stderr'e yapılandırılmış INFO logları yaz",
+    )
+    sub = p.add_subparsers(dest="command", required=True, metavar="KOMUT")
+
+    def cmd(name: str, help_text: str) -> argparse.ArgumentParser:
+        return sub.add_parser(name, aliases=[COMMANDS[name]], help=help_text)
+
+    def universe_arg(sp: argparse.ArgumentParser, help_text: str) -> None:
+        sp.add_argument("--evren", "--universe", dest="universe", metavar="EVREN", help=help_text)
+
+    def symbols_arg(sp: argparse.ArgumentParser) -> None:
+        sp.add_argument(
+            "--semboller",
+            "--symbols",
+            dest="symbols",
+            nargs="+",
+            metavar="SEMBOL",
+            help="belirli semboller, örn. THYAO ASELS (--evren yerine geçer)",
+        )
+
+    def provider_args(sp: argparse.ArgumentParser) -> None:
+        sp.add_argument(
+            "--kaynak",
+            "--provider",
+            dest="provider",
+            choices=["yahoo", "csv", "synthetic"],
+            help="veri kaynağı: yahoo (gerçek), csv (kendi dosyaların), synthetic (demo)",
+        )
+        sp.add_argument(
+            "--yenile",
+            "--refresh",
+            dest="refresh",
+            action="store_true",
+            help="önbelleği yok say, veriyi yeniden indir",
+        )
+
+    def no_news_arg(sp: argparse.ArgumentParser) -> None:
+        sp.add_argument(
+            "--habersiz",
+            "--no-news",
+            dest="no_news",
+            action="store_true",
+            help="KAP haber faktörünü kapat",
+        )
 
     def data_args(sp: argparse.ArgumentParser) -> None:
-        sp.add_argument("--provider", choices=["yahoo", "csv", "synthetic"])
-        sp.add_argument("--refresh", action="store_true", help="ignore the raw-data cache")
+        provider_args(sp)
         sp.add_argument(
+            "--tarih",
             "--as-of",
+            dest="as_of",
             type=date.fromisoformat,
-            metavar="YYYY-MM-DD",
-            help="evaluate as of a past session using only data up to that date",
+            metavar="YYYY-AA-GG",
+            help="geçmiş bir seansa göre değerlendir; o tarihten sonraki veri kullanılmaz",
         )
-        sp.add_argument("--no-news", action="store_true", help="disable the KAP news factor")
+        no_news_arg(sp)
+        sp.add_argument(
+            "--alim-esigi",
+            "--buy-threshold",
+            dest="buy_threshold",
+            type=float,
+            metavar="PUAN",
+            help="BOĞA piyasası AL eşiği; diğer piyasa durumlarının eşikleri aynı miktarda kayar",
+        )
 
-    scan = sub.add_parser("scan", help="scan the universe and print a ranked table")
+    scan = cmd("tara", "evreni tara ve sıralı tabloyu yazdır")
     data_args(scan)
-    scan.add_argument("--universe", help="BIST30 | BIST50 | BIST100 | CUSTOM | <list name>")
-    scan.add_argument("--symbols", nargs="+", help="explicit symbols (overrides --universe)")
-    scan.add_argument("--top", type=int, help="show only the top N rows")
+    universe_arg(scan, "BIST30 | BIST50 | BIST100 | CUSTOM | <liste adı>")
+    symbols_arg(scan)
     scan.add_argument(
+        "--ilk", "--top", dest="top", type=int, metavar="N", help="yalnızca ilk N satırı göster"
+    )
+    scan.add_argument(
+        "--en-az-sinyal",
         "--min-signal",
+        dest="min_signal",
         choices=[s.value for s in SignalType],
-        help="hide rows below this signal level",
+        help="bu sinyal seviyesinin altındaki satırları gizle",
     )
-    scan.add_argument("--detail", action="store_true", help="print the full breakdown per symbol")
-    scan.add_argument("--json", type=Path, metavar="PATH", help="write JSON ('-' = stdout)")
     scan.add_argument(
-        "--save",
+        "--detay",
+        "--detail",
+        dest="detail",
         action="store_true",
-        help="write signals and daily features CSVs to data/processed/",
+        help="her hisse için ayrıntılı dökümü yazdır",
+    )
+    scan.add_argument("--json", type=Path, metavar="DOSYA", help="JSON olarak yaz ('-' = ekrana)")
+    scan.add_argument(
+        "--kaydet",
+        "--save",
+        dest="save",
+        action="store_true",
+        help="sinyalleri ve günlük göstergeleri data/processed/ altına CSV olarak yaz",
     )
 
-    analyze = sub.add_parser("analyze", help="detailed, explained analysis for symbols")
+    analyze = cmd("analiz", "hisseler için ayrıntılı, gerekçeli analiz")
     data_args(analyze)
-    analyze.add_argument("symbols", nargs="+")
+    analyze.add_argument("symbols", nargs="+", metavar="SEMBOL")
 
-    regime = sub.add_parser("regime", help="show the current market regime")
+    regime = cmd("piyasa", "güncel piyasa durumunu göster")
     data_args(regime)
-    regime.add_argument("--universe", help="universe used for the breadth measure")
+    universe_arg(regime, "piyasa genişliği ölçümünde kullanılacak evren")
 
-    uni = sub.add_parser("universe", help="list the symbols of a universe")
-    uni.add_argument("--universe")
+    uni = cmd("evren", "bir evrendeki sembolleri listele")
+    universe_arg(uni, "evren adı, örn. BIST50")
 
     def bt_args(sp: argparse.ArgumentParser) -> None:
-        sp.add_argument("--provider", choices=["yahoo", "csv", "synthetic"])
-        sp.add_argument("--refresh", action="store_true", help="ignore the raw-data cache")
-        sp.add_argument("--universe", help="default: backtest.universe from backtest.yaml")
-        sp.add_argument("--symbols", nargs="+", help="explicit symbols (overrides --universe)")
-        sp.add_argument("--start", type=date.fromisoformat, metavar="YYYY-MM-DD")
-        sp.add_argument("--end", type=date.fromisoformat, metavar="YYYY-MM-DD")
+        provider_args(sp)
+        universe_arg(sp, "varsayılan: backtest.yaml içindeki backtest.universe")
+        symbols_arg(sp)
         sp.add_argument(
+            "--baslangic",
+            "--start",
+            dest="start",
+            type=date.fromisoformat,
+            metavar="YYYY-AA-GG",
+            help="başlangıç tarihi",
+        )
+        sp.add_argument(
+            "--bitis",
+            "--end",
+            dest="end",
+            type=date.fromisoformat,
+            metavar="YYYY-AA-GG",
+            help="bitiş tarihi",
+        )
+        sp.add_argument(
+            "--ayarla",
             "--set",
+            dest="set",
             action="append",
             default=[],
-            metavar="KEY=VALUE",
-            help="override a setting, e.g. --set risk.minimum_rr=2.5 (repeatable)",
+            metavar="ANAHTAR=DEĞER",
+            help="bir ayarı değiştir, örn. --ayarla risk.minimum_rr=2.5 (tekrarlanabilir)",
         )
-        sp.add_argument("--no-news", action="store_true", help="disable the KAP news factor")
+        no_news_arg(sp)
 
-    bt = sub.add_parser("backtest", help="historical simulation with costs and benchmarks")
+    bt = cmd("geritest", "maliyetler ve karşılaştırma endeksleriyle geçmiş simülasyonu")
     bt_args(bt)
-    bt.add_argument("--trades", type=Path, metavar="CSV", help="write the trade list")
-    bt.add_argument("--equity", type=Path, metavar="CSV", help="write daily equity/benchmarks")
+    bt.add_argument(
+        "--islemler",
+        "--trades",
+        dest="trades",
+        type=Path,
+        metavar="CSV",
+        help="işlem listesini CSV'ye yaz",
+    )
+    bt.add_argument(
+        "--ozkaynak",
+        "--equity",
+        dest="equity",
+        type=Path,
+        metavar="CSV",
+        help="günlük özkaynak ve endeks eğrilerini CSV'ye yaz",
+    )
 
-    sw = sub.add_parser("sweep", help="compare parameter combinations over the same period")
+    sw = cmd("parametre-tara", "aynı dönemde parametre kombinasyonlarını karşılaştır")
     bt_args(sw)
     sw.add_argument(
+        "--izgara",
         "--grid",
+        dest="grid",
         action="append",
         default=[],
-        metavar="KEY=[V1,V2]",
-        help="parameter values to combine (default: walk_forward.grid)",
+        metavar="ANAHTAR=[D1,D2]",
+        help="denenecek değerler (varsayılan: walk_forward.grid)",
     )
-    sw.add_argument("--csv", type=Path, help="write the sweep table")
+    sw.add_argument("--csv", type=Path, help="sonuç tablosunu CSV'ye yaz")
 
-    wf = sub.add_parser("walkforward", help="walk-forward parameter selection and OOS test")
+    wf = cmd("ileri-test", "ileriye dönük (walk-forward) parametre seçimi ve örneklem dışı test")
     bt_args(wf)
 
-    rs = sub.add_parser("research", help="forward returns by score bucket / signal / regime")
+    rs = cmd("arastirma", "puan aralığı, sinyal ve piyasa durumuna göre ileri getiriler")
     bt_args(rs)
 
-    ks = sub.add_parser("kap-sync", help="download KAP disclosures for a universe and period")
-    ks.add_argument("--universe")
-    ks.add_argument("--symbols", nargs="+")
-    ks.add_argument("--start", type=date.fromisoformat, metavar="YYYY-MM-DD")
-    ks.add_argument("--end", type=date.fromisoformat, metavar="YYYY-MM-DD")
+    ks = cmd("kap-indir", "bir evren ve dönem için KAP bildirimlerini indir")
+    universe_arg(ks, "evren adı")
+    symbols_arg(ks)
     ks.add_argument(
+        "--baslangic", "--start", dest="start", type=date.fromisoformat, metavar="YYYY-AA-GG"
+    )
+    ks.add_argument("--bitis", "--end", dest="end", type=date.fromisoformat, metavar="YYYY-AA-GG")
+    ks.add_argument(
+        "--metinler",
         "--details",
+        dest="details",
         action="store_true",
-        help="also download disclosure texts for amount-bearing event types",
+        help="tutar içeren bildirim türlerinin metinlerini de indir",
     )
 
-    nw = sub.add_parser("news", help="classified KAP events and the current news score")
-    nw.add_argument("symbols", nargs="+")
-    nw.add_argument("--days", type=int, default=30, help="look-back window (default 30)")
-    nw.add_argument("--no-sync", action="store_true", help="use cached KAP data only")
+    nw = cmd("haber", "sınıflandırılmış KAP olayları ve güncel haber puanı")
+    nw.add_argument("symbols", nargs="+", metavar="SEMBOL")
+    nw.add_argument(
+        "--gun",
+        "--days",
+        dest="days",
+        type=int,
+        default=30,
+        help="kaç gün geriye bakılsın (varsayılan 30)",
+    )
+    nw.add_argument(
+        "--esitleme-yok",
+        "--no-sync",
+        dest="no_sync",
+        action="store_true",
+        help="yalnızca önbellekteki KAP verisini kullan",
+    )
     return p
+
+
+def _apply_buy_threshold(settings: Settings, args: argparse.Namespace) -> Settings:
+    """--alim-esigi sets the BULL threshold; every regime shifts by the same amount."""
+    value = getattr(args, "buy_threshold", None)
+    if value is None:
+        return settings
+    bull = settings.strategy.buy_threshold[MarketRegime.BULL]
+    return apply_overrides(settings, {"strategy.buy_threshold_offset": value - bull})
 
 
 def _news_active(settings: Settings, args: argparse.Namespace) -> bool:
@@ -387,10 +538,17 @@ def _news_command(settings: Settings, args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    args.command = _CANONICAL[args.command]
     configure_logging("INFO" if args.verbose else None)
     try:
         settings = load_settings(args.config_dir)
     except (ValueError, OSError) as exc:
+        print(f"Configuration error: {exc}", file=sys.stderr)
+        return 2
+
+    try:
+        settings = _apply_buy_threshold(settings, args)
+    except ValueError as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 2
 

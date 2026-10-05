@@ -90,9 +90,10 @@ def test_breadth_is_optional_in_score(settings):
 
 def test_regime_modifies_thresholds(settings):
     t = {r: buy_threshold(r, settings.strategy) for r in MarketRegime}
-    assert t[MarketRegime.BULL] == 75
-    assert t[MarketRegime.NEUTRAL] == 80
-    assert t[MarketRegime.BEAR] == 88
+    assert t[MarketRegime.BULL] == 65
+    assert t[MarketRegime.NEUTRAL] == 70
+    assert t[MarketRegime.HIGH_VOLATILITY] == 75
+    assert t[MarketRegime.BEAR] == 80
     assert t[MarketRegime.BULL] < t[MarketRegime.NEUTRAL] < t[MarketRegime.BEAR]
 
 
