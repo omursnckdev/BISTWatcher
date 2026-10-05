@@ -130,3 +130,29 @@ def test_live_yahoo_download():
 
     frame = asyncio.run(run())
     assert len(frame) > 200
+
+
+DEMO = ["--as-of", "2025-03-31", "--json", "-"]
+
+
+def test_cli_turkish_names_match_english(capsys):
+    en = ["scan", "--provider", "synthetic", "--symbols", "THYAO", "ASELS", *DEMO]
+    tr = ["tara", "--kaynak", "synthetic", "--semboller", "THYAO", "ASELS", "--tarih",
+          "2025-03-31", "--json", "-"]  # fmt: skip
+    assert main(en) == 0
+    english = capsys.readouterr().out
+    assert main(tr) == 0
+    assert capsys.readouterr().out == english
+
+    assert main(["evren", "--evren", "BIST30"]) == 0
+    assert len(capsys.readouterr().out.split()) == 30
+
+
+def test_cli_buy_threshold_shifts_every_regime(capsys):
+    base = ["tara", "--kaynak", "synthetic", "--semboller", "THYAO", *DEMO]
+    assert main(base) == 0
+    default = json.loads(capsys.readouterr().out)["signals"][0]
+    assert main([*base, "--alim-esigi", "60"]) == 0
+    shifted = json.loads(capsys.readouterr().out)["signals"][0]
+    # The default BULL threshold is 65, so every regime moves down by 5.
+    assert shifted["buy_threshold"] == default["buy_threshold"] - 5

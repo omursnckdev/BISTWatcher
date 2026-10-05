@@ -16,17 +16,19 @@ def cls(score, regime=MarketRegime.BULL, plan=GOOD_PLAN, liq=True, data=True, st
 
 def test_bands_in_bull():
     assert cls(30)[0] is SignalType.NO_TRADE
-    assert cls(55)[0] is SignalType.WATCH
-    assert cls(70)[0] is SignalType.WEAK_SETUP
-    assert cls(78)[0] is SignalType.BUY_CANDIDATE
-    assert cls(90)[0] is SignalType.STRONG_BUY_CANDIDATE
+    assert cls(44)[0] is SignalType.NO_TRADE
+    assert cls(45)[0] is SignalType.WATCH
+    assert cls(55)[0] is SignalType.WEAK_SETUP
+    assert cls(65)[0] is SignalType.BUY_CANDIDATE
+    assert cls(75)[0] is SignalType.STRONG_BUY_CANDIDATE
 
 
 def test_regime_raises_threshold():
-    assert cls(78, MarketRegime.NEUTRAL)[0] is SignalType.WEAK_SETUP
-    assert cls(85, MarketRegime.BEAR)[0] is SignalType.WEAK_SETUP
-    assert cls(89, MarketRegime.BEAR)[0] is SignalType.BUY_CANDIDATE
-    assert cls(98, MarketRegime.BEAR)[0] is SignalType.STRONG_BUY_CANDIDATE
+    assert cls(68, MarketRegime.NEUTRAL)[0] is SignalType.WEAK_SETUP
+    assert cls(70, MarketRegime.NEUTRAL)[0] is SignalType.BUY_CANDIDATE
+    assert cls(79, MarketRegime.BEAR)[0] is SignalType.WEAK_SETUP
+    assert cls(80, MarketRegime.BEAR)[0] is SignalType.BUY_CANDIDATE
+    assert cls(90, MarketRegime.BEAR)[0] is SignalType.STRONG_BUY_CANDIDATE
 
 
 def test_bear_block_option():

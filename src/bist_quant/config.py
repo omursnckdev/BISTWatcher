@@ -89,16 +89,16 @@ class StrategySettings(BaseModel):
     profile: Literal["SWING"] = "SWING"
     buy_threshold: dict[MarketRegime, float] = Field(
         default_factory=lambda: {
-            MarketRegime.BULL: 75,
-            MarketRegime.NEUTRAL: 80,
-            MarketRegime.HIGH_VOLATILITY: 85,
-            MarketRegime.BEAR: 88,
+            MarketRegime.BULL: 65,
+            MarketRegime.NEUTRAL: 70,
+            MarketRegime.HIGH_VOLATILITY: 75,
+            MarketRegime.BEAR: 80,
         }
     )
     buy_threshold_offset: float = 0.0
     strong_buy_margin: float = Field(10, ge=0)
-    weak_setup_threshold: float = 65
-    watch_threshold: float = 50
+    weak_setup_threshold: float = 55
+    watch_threshold: float = 45
     block_buys_in_bear: bool = False
 
     @model_validator(mode="after")

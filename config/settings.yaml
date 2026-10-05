@@ -48,15 +48,17 @@ market_regime:
 strategy:
   profile: SWING
   # Minimum score for BUY_CANDIDATE depends on the market regime.
+  # Lowered on 2026-10-05 (was 75/80/85/88, weak 65, watch 50) because the original
+  # bars produced almost no BUY candidates. Override per run with --alim-esigi.
   buy_threshold:
-    BULL: 75
-    NEUTRAL: 80
-    HIGH_VOLATILITY: 85
-    BEAR: 88
+    BULL: 65
+    NEUTRAL: 70
+    HIGH_VOLATILITY: 75
+    BEAR: 80
   buy_threshold_offset: 0     # added to every regime threshold (used for robustness sweeps)
   strong_buy_margin: 10       # STRONG_BUY_CANDIDATE = buy_threshold + margin
-  weak_setup_threshold: 65
-  watch_threshold: 50
+  weak_setup_threshold: 55
+  watch_threshold: 45
   block_buys_in_bear: false   # true => never emit BUY in a BEAR regime
 
 risk:
