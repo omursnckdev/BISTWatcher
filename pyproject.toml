@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bist-quant"
-version = "0.1.0"
+version = "0.2.0"
 description = "Explainable Borsa Istanbul (BIST) swing-trading scanner and signal engine (Phase 1: technical core)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -19,14 +19,21 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.5"]
+dev = ["pytest>=8.0", "ruff>=0.5", "openpyxl>=3.1"]
+gui = ["PySide6-Essentials>=6.6", "matplotlib>=3.8", "openpyxl>=3.1"]
 llm = ["anthropic>=1.0"]
 
 [project.scripts]
 bist-quant = "bist_quant.main:main"
 
+[project.gui-scripts]
+bistwatcher = "bist_quant.gui.app:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+bist_quant = ["gui/icon.png"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
