@@ -8,6 +8,55 @@ verdiğini tek tek yazar ve her aday için **giriş, stop, hedef ve lot sayısı
 - Çıkan sinyaller yatırım tavsiyesi değildir. Eşikler henüz başlangıç tahminleridir.
 - Ayrıntılı İngilizce teknik belge: [docs/technical-reference.md](docs/technical-reference.md)
 
+## Windows masaüstü uygulaması
+
+Python kurmadan, pencereli bir uygulama olarak kullanmak için:
+
+1. GitHub'da **Actions → Windows app** sayfasında en son başarılı (yeşil) çalıştırmayı açın.
+2. Sayfanın altındaki **Artifacts** bölümünden indirin:
+   - **BISTWatcher-Kurulum**: içindeki `BISTWatcher-Kurulum.exe` dosyasını çalıştırın.
+     Yönetici yetkisi istemez; Başlat menüsüne (isterseniz masaüstüne) kısayol ekler.
+   - **BISTWatcher-Tasinabilir**: kurulum istemeyen sürüm. Klasörü açıp `BISTWatcher.exe`'ye
+     çift tıklayın.
+3. Windows "bilinmeyen yayıncı" uyarısı verirse **Ek bilgi → Yine de çalıştır** deyin
+   (uygulama imzalı değil).
+
+`v` ile başlayan bir etiket (ör. `v0.2.0`) gönderildiğinde aynı dosyalar
+**Releases** sayfasına da eklenir.
+
+Uygulamanın sekmeleri:
+
+| Sekme | Ne yapar |
+|---|---|
+| **Tarama** | BIST30/50/100 ya da kendi listenizi tarar. Puan, sinyal (GÜÇLÜ AL, AL, ZAYIF KURULUM, İZLE, İŞLEM YOK), giriş bölgesi, stop, hedefler, lot ve "Elindeyse" (TUT/SAT) sütunu. Bir satıra tıklayınca faktör puanları ve gerekçeler sağda görünür. |
+| **Hisse Analizi** | Mum grafiği, EMA20/50/200, Bollinger, hacim, RSI, MACD; AL adaylarında stop/TP/giriş bölgesi çizgileri. |
+| **Portföyüm (SAT/TUT)** | Elinizdeki hisseleri (alış tarihi, fiyat, lot) girin. Geri testteki çıkış kuralları alış tarihinden bugüne uygulanır ve her pozisyon için **SAT**, **KISMİ SAT** ya da **TUT** kararı, nedeni ve kâr/zarar gösterilir. |
+| **Geri Test** | Aynı kuralların geçmiş performansı: getiri, düşüş, Sharpe, işlem listesi, endeksle karşılaştırmalı özkaynak grafiği. |
+| **Ayarlar** | Veri kaynağı, AL eşiği, direnç sınırı, asgari getiri/risk, portföy büyüklüğü, işlem başı risk, özel liste. |
+
+Tarama sonuçları **Excel** (AL listesi, SAT uyarıları, portföy, gerekçeler ayrı sayfalarda),
+**HTML** (yazdırılabilir rapor) ve **CSV** olarak kaydedilebilir.
+
+"SAT" açığa satış önerisi değildir; strateji yalnızca alım tarafında çalışır. SAT, elinizdeki
+bir pozisyondan çıkmak anlamına gelir: tarama tablosunda kapanış EMA20'nin ve MACD sinyal
+çizgisinin altındaysa (geri testteki trend çıkış kuralı), Portföyüm sekmesinde ise stop, hedef,
+trend, zaman ve azami süre kurallarından biri tetiklendiğinde.
+
+Ayarlar, portföy listesi, fiyat önbelleği ve raporlar `%LOCALAPPDATA%\BISTWatcher` klasöründe
+tutulur. İleri düzey ayarlar için **Ayarlar → YAML ayar dosyalarını dışa aktar** ile
+`config` dosyalarının bir kopyasını oraya alıp düzenleyebilirsiniz.
+
+İnternet yoksa **Ayarlar → Veri kaynağı → Sentetik demo verisi** ile uygulamayı deneyebilirsiniz
+(fiyatlar gerçek değildir).
+
+Ekran görüntüleri (sentetik demo verisiyle):
+
+![Tarama](docs/images/masaustu-tarama.png)
+![Hisse analizi](docs/images/masaustu-analiz.png)
+
+Kaynak koddan çalıştırmak için: `pip install -e ".[gui]"` ve ardından `python -m bist_quant.gui`
+(ya da `bistwatcher`).
+
 ## 1. Kurulum
 
 Python 3.11 veya üstü gerekir (3.12 önerilir).
