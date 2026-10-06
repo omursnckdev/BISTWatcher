@@ -137,3 +137,66 @@ def test_live_quotes_are_shown_next_to_the_close(demo):
     finally:
         result.live_quotes = {}
     assert "Anlık" not in report.signal_rows(result)[0]
+
+
+def test_auto_refresh_decisions():
+    from datetime import datetime
+
+    from bist_quant.data.market_data import ISTANBUL_TZ
+
+    def at(day, hh, mm=0):
+        return datetime(2026, 10, day, hh, mm, tzinfo=ISTANBUL_TZ)  # 5 Oct 2026 = Monday
+
+    mon, tue, fri = date(2026, 10, 5), date(2026, 10, 6), date(2026, 10, 9)
+    assert services.last_completed_session(at(6, 10, 13)) == mon
+    assert services.last_completed_session(at(6, 18, 20)) == tue
+    assert services.last_completed_session(at(11, 12)) == fri  # Sunday
+    assert services.last_completed_session(at(12, 9)) == fri  # Monday before the open
+
+    act = services.auto_refresh_action
+    assert act(at(6, 10, 13), None, "yahoo") == "scan"
+    assert act(at(6, 10, 13), mon, "yahoo") == "quotes"  # session open: prices only
+    assert act(at(6, 18, 20), mon, "yahoo") == "scan"  # Tuesday's bar is final now
+    assert act(at(6, 18, 20), tue, "yahoo") == "none"
+    assert act(at(11, 12), fri, "yahoo") == "none"  # weekend
+    assert act(at(6, 10, 13), mon, "synthetic") == "none"
+
+
+def test_backtest_uses_portfolio_size_and_traded_prices(demo):
+    home, _, symbols, _ = demo
+    settings = services.load_app_settings(
+        home, Prefs(provider="synthetic", portfolio_equity=100_000)
+    )
+    bt = services.backtest(settings, symbols[:6], "BIST30", date(2024, 1, 2), date(2025, 3, 31))
+    assert bt.initial_equity == 100_000
+    assert bt.equity.iloc[0] == pytest.approx(100_000, rel=0.01)
+    assert bt.requested_start == date(2024, 1, 2)
+    t = bt.trades
+    assert len(t)
+    # min_position_pct (2%) drops token positions; nothing exceeds max_position_pct (20%)
+    assert t["equity_pct"].min() >= 2.0 - 1e-6
+    assert t["equity_pct"].max() <= 20.0 + 0.5
+    assert (t["position_value"] > 0).all()
+
+
+def test_traded_scale_converts_adjusted_prices():
+    import pandas as pd
+
+    idx = pd.bdate_range("2024-01-01", periods=3)
+    bars = {
+        "AAA": pd.DataFrame({"close": [50.0, 51, 52], "raw_close": [100.0, 102, 104]}, index=idx)
+    }
+    trades = pd.DataFrame(
+        {
+            "symbol": ["AAA"],
+            "entry_date": [idx[1]],
+            "entry_price": [51.0],
+            "exit_price": [52.0],
+            "shares": [200],
+        }
+    )
+    out = services.traded_scale(trades, bars, pd.Series([1e5, 1e5, 1e5], index=idx))
+    assert out.loc[0, "entry_price"] == 102 and out.loc[0, "exit_price"] == 104
+    assert out.loc[0, "shares"] == 100
+    assert out.loc[0, "position_value"] == 51 * 200
+    assert out.loc[0, "equity_pct"] == pytest.approx(10.2)

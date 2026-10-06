@@ -199,3 +199,14 @@ def test_max_open_positions():
     s = settings(**{"risk.max_open_positions": 2})
     r = run_backtest(s, feats, cands, pd.Series("BULL", index=f.index), f.index)
     assert {t.symbol for t in r.trades} == {"A", "B"}
+
+
+def test_min_position_skips_token_entries():
+    # 1% risk / 4 TRY per share = 250 shares = 25% of equity; a 0.5% portfolio-risk cap
+    # leaves room for only 125 shares (12.5%): taken at min 10%, skipped at min 15%.
+    f = bars([(100, 101, 99, 100), (100, 101, 99, 100), (100, 101, 99, 100)])
+    s = settings(**{"risk.max_portfolio_risk_pct": 0.5})
+    (t,) = run(apply_overrides(s, {"backtest.min_position_pct": 10.0}), f).trades
+    assert t.shares == 125
+    r = run(apply_overrides(s, {"backtest.min_position_pct": 15.0}), f)
+    assert not r.trades and r.stats["no_capacity"] == 1

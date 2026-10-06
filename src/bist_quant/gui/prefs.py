@@ -27,6 +27,8 @@ class Prefs:
     risk_per_trade_pct: float | None = None
     block_buys_in_bear: bool | None = None
     backtest_start: str = "2020-01-02"
+    auto_refresh: bool = True
+    refresh_minutes: int = 5
 
     def overrides(self, bull_threshold: float) -> dict[str, Any]:
         """Dotted-path setting overrides; ``None`` fields keep the YAML value."""

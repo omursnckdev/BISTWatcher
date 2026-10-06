@@ -305,7 +305,7 @@ class Simulator:
             )
         lot = self.risk.lot_size
         shares = int(math.floor(max(0.0, min(caps)) / lot) * lot)
-        if shares <= 0:
+        if shares <= 0 or shares * entry < eq * self.bt.min_position_pct / 100:
             self.stats["no_capacity"] += 1
             return
         cost = shares * entry * self.fee

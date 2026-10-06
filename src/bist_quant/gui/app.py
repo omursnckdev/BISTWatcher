@@ -11,7 +11,7 @@ import os
 import sys
 import tempfile
 import traceback
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from bist_quant import __version__
@@ -69,6 +69,7 @@ from PySide6.QtWidgets import (  # noqa: E402
     QWidget,
 )
 
+from bist_quant.data.market_data import ISTANBUL_TZ  # noqa: E402
 from bist_quant.data.universe import load_universe, normalize_symbol  # noqa: E402
 from bist_quant.gui import charts, paths, report, services  # noqa: E402
 from bist_quant.gui.prefs import (  # noqa: E402
@@ -92,6 +93,41 @@ from bist_quant.gui.texts import (  # noqa: E402
 )
 from bist_quant.models.signals import MarketRegime, SignalType  # noqa: E402
 from bist_quant.strategy.exit_check import ExitAction, Holding  # noqa: E402
+from bist_quant.strategy.short_term import short_term_score  # noqa: E402
+
+ONE_DECIMAL = {"Puan", "G/R", "R", "K/Z %", "Günlük %", "Anlık %", "Özkaynak %", "Gün içi", "T+2"}
+HEADER_TIPS = {
+    "Gün içi": "Aynı gün al-sat uygunluğu (0-100): işlem hacmi, günlük fiyat aralığı,\n"
+    "hacim artışı ve kapanışın gün içi aralıktaki yeri. Sinyal değildir.",
+    "T+2": "1-2 seanslık (T+2) tutma uygunluğu (0-100): 3 günlük getiri, EMA20 üstü,\n"
+    "RSI, MACD ivmesi, oynaklık, hacim ve likidite. Sinyal değildir.",
+}
+SIGNED_COLUMNS = {"Günlük %", "Anlık %", "K/Z %", "K/Z TL", "R"}
+SIGNED_TEXT_LIGHT = ("#1b7a34", "#c62828")  # (up, down) on a light table
+SIGNED_TEXT_DARK = ("#5fd37a", "#ff7b7b")  # (up, down) on a dark table
+
+
+def short_term_line(features) -> str:
+    st = short_term_score(features)
+    if st is None:
+        return ""
+    return (
+        f"<p style='margin:2px 0'>Kısa vade uygunluğu: Gün içi <b>{st.intraday:.0f}</b>/100"
+        f" · T+2 <b>{st.two_day:.0f}</b>/100 &nbsp;<small style='color:#666'>(10 günlük ort."
+        f" aralık %{money(st.avg_range_pct, 1)}, 3 günlük getiri {st.return_3d_pct:+.1f}%)"
+        "</small></p>"
+    )
+
+
+def signed(value) -> bool:
+    """A non-zero number (NaN and missing values stay uncoloured)."""
+    return isinstance(value, int | float) and not isinstance(value, bool) and value == value != 0
+
+
+def dark_theme() -> bool:
+    app = QApplication.instance()
+    return bool(app) and app.palette().base().color().lightness() < 128
+
 
 APP_NAME = "BISTWatcher"
 REGIME_COLOR = {
@@ -144,8 +180,11 @@ class RowsModel(QAbstractTableModel):
         return 0 if parent.isValid() else len(self.cols)
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):  # noqa: N802
-        if role == Qt.ItemDataRole.DisplayRole and orientation == Qt.Orientation.Horizontal:
-            return self.cols[section]
+        if orientation == Qt.Orientation.Horizontal:
+            if role == Qt.ItemDataRole.DisplayRole:
+                return self.cols[section]
+            if role == Qt.ItemDataRole.ToolTipRole:
+                return HEADER_TIPS.get(self.cols[section])
         return None
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
@@ -158,7 +197,8 @@ class RowsModel(QAbstractTableModel):
                 return "-"
             if isinstance(value, float):
                 return money(
-                    value, 1 if col in {"Puan", "G/R", "R", "K/Z %", "Günlük %", "Anlık %"} else 2
+                    value,
+                    1 if col in ONE_DECIMAL else 2,
                 )
             if isinstance(value, int) and not isinstance(value, bool) and col != "Sıra":
                 return money(value, 0)
@@ -171,12 +211,18 @@ class RowsModel(QAbstractTableModel):
             color = self.colors.get(col, {}).get(str(value))
             if color:
                 return QColor(color)
-            if col in {"Günlük %", "Anlık %", "K/Z %", "K/Z TL", "R"} and isinstance(
-                value, int | float
-            ):
-                return QColor("#e8f5e9") if value > 0 else QColor("#ffebee") if value < 0 else None
-        if role == Qt.ItemDataRole.ForegroundRole and self.colors.get(col, {}).get(str(value)):
-            return QColor("#000000")
+        if role == Qt.ItemDataRole.ForegroundRole:
+            if self.colors.get(col, {}).get(str(value)):
+                return QColor("#000000")
+            # Signed changes: coloured text on the normal background. Pale tints behind
+            # the default text were unreadable, especially with the Windows dark theme.
+            if col in SIGNED_COLUMNS and signed(value):
+                up, down = SIGNED_TEXT_DARK if dark_theme() else SIGNED_TEXT_LIGHT
+                return QColor(up if value > 0 else down)
+        if role == Qt.ItemDataRole.FontRole and col in SIGNED_COLUMNS and signed(value):
+            font = QFont()
+            font.setBold(True)
+            return font
         numeric = isinstance(value, int | float) and not isinstance(value, bool)
         if role == Qt.ItemDataRole.TextAlignmentRole and numeric:
             return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -243,6 +289,27 @@ def signal_colors() -> dict[str, dict[str, str]]:
     }
 
 
+def backtest_info(summary, trades: int) -> str:
+    """Requested vs simulated period, capital and why some signals were not traded."""
+    req = ""
+    if summary.requested_start and summary.requested_end:
+        req = f"İstenen dönem {summary.requested_start:%d.%m.%Y} – {summary.requested_end:%d.%m.%Y}"
+        if summary.start > summary.requested_start + timedelta(days=7):
+            req += " (daha öncesi için yeterli veri yok)"
+        req += "; "
+    st = summary.stats
+    text = (
+        f"<b>{req}simüle edilen {summary.start:%d.%m.%Y} – {summary.end:%d.%m.%Y}</b> · "
+        f"{summary.symbols} hisse · başlangıç sermayesi {money(summary.initial_equity, 0)} TL · "
+        f"{trades} işlem. AL sinyali {st.get('orders', 0)}, gerçekleşen {st.get('filled', 0)}, "
+        f"pozisyon/risk sınırı nedeniyle alınmayan {st.get('no_capacity', 0)}, "
+        f"giriş bölgesine gelmeyen {st.get('missed_limit', 0)}."
+    )
+    if summary.skipped:
+        text += " Atlanan: " + ", ".join(sorted(summary.skipped)) + "."
+    return text
+
+
 # ---------------------------------------------------------------- main window
 
 
@@ -284,6 +351,14 @@ class MainWindow(QMainWindow):
         self.progress.setRange(0, 0)
         self.progress.hide()
         self.statusBar().addPermanentWidget(self.progress)
+        self.refresh_label = QLabel("")
+        self.statusBar().addPermanentWidget(self.refresh_label)
+        self.last_update: datetime | None = None
+        self._quiet = False
+        self.auto_scan_skip: date | None = None  # a session that did not show up (holiday)
+        self.auto_timer = QTimer(self)
+        self.auto_timer.timeout.connect(self.auto_tick)
+        self._configure_auto_refresh()
         self._update_source_status()
 
         menu = self.menuBar().addMenu("Dosya")
@@ -311,6 +386,7 @@ class MainWindow(QMainWindow):
         self.progress.show()
         self.statusBar().showMessage(label)
         worker = Worker(fn, *args, **kw)
+        quiet = self._quiet  # automatic refreshes report errors in the status bar only
 
         def finish() -> None:
             for b in buttons:
@@ -327,6 +403,10 @@ class MainWindow(QMainWindow):
 
         def fail(message: str) -> None:
             finish()
+            if quiet:
+                first = message.split("\n", 1)[0]
+                self.statusBar().showMessage(f"Otomatik yenileme başarısız: {first}", 60_000)
+                return
             self.statusBar().showMessage("Hata", 5000)
             self.show_error(message)
 
@@ -355,6 +435,68 @@ class MainWindow(QMainWindow):
 
     def _open_path(self, path: Path) -> None:
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+    # ------------------------------------------------------------ auto refresh
+    def _configure_auto_refresh(self) -> None:
+        if self.prefs.auto_refresh:
+            self.auto_timer.start(max(1, int(self.prefs.refresh_minutes)) * 60_000)
+        else:
+            self.auto_timer.stop()
+        self._update_refresh_label()
+
+    def _update_refresh_label(self) -> None:
+        last = f"son güncelleme {self.last_update:%H:%M:%S}" if self.last_update else ""
+        if self.prefs.auto_refresh:
+            nxt = datetime.now(ISTANBUL_TZ) + timedelta(
+                milliseconds=self.auto_timer.remainingTime()
+            )
+            parts = [
+                f"Otomatik yenileme: {self.prefs.refresh_minutes} dk",
+                last,
+                f"sonraki {nxt:%H:%M}",
+            ]
+        else:
+            parts = ["Otomatik yenileme kapalı", last]
+        self.refresh_label.setText("  ·  ".join(p for p in parts if p) + "  ")
+
+    def _mark_updated(self) -> None:
+        self.last_update = datetime.now(ISTANBUL_TZ)
+        self._update_refresh_label()
+
+    def auto_tick(self) -> None:
+        """Periodic refresh: new scan when a session has closed, else intraday prices."""
+        try:
+            if self.workers or self.scan_use_date.isChecked():
+                return
+            now = datetime.now(ISTANBUL_TZ)
+            as_of = self.scan_result.as_of if self.scan_result else None
+            action = services.auto_refresh_action(now, as_of, self.prefs.provider)
+            if action == "scan" and self.auto_scan_skip == services.last_completed_session(now):
+                action = "quotes" if services.session_open(now) else "none"
+            self._quiet = True
+            if action == "scan":
+                self.start_scan()
+                if self.portfolio_result and self.holdings:
+                    self.start_portfolio()
+            elif action == "quotes":
+                self.refresh_quotes()
+                self.refresh_portfolio_quotes()
+        finally:
+            self._quiet = False
+            self._update_refresh_label()
+
+    def refresh_portfolio_quotes(self) -> None:
+        if not self.portfolio_result:
+            return
+        report_ = self.portfolio_result
+
+        def done(scan) -> None:
+            report_.scan = scan
+            self._portfolio_done(report_)
+
+        self.run_task(
+            "Portföy fiyatları alınıyor...", services.refresh_live_quotes, done, report_.scan
+        )
 
     def _update_source_status(self) -> None:
         names = {
@@ -496,6 +638,10 @@ class MainWindow(QMainWindow):
 
     def _scan_done(self, result) -> None:
         self.scan_result = result
+        self._mark_updated()
+        expected = services.last_completed_session(datetime.now(ISTANBUL_TZ))
+        if result.as_of < expected and not self.scan_use_date.isChecked():
+            self.auto_scan_skip = expected  # market holiday or data not published yet
         self._set_regime(result)
         self._set_scan_summary()
         for b in self.export_buttons:
@@ -513,6 +659,7 @@ class MainWindow(QMainWindow):
 
         def done(result) -> None:
             self.scan_result = result
+            self._mark_updated()
             self._set_scan_summary()
             self._fill_scan_table()
 
@@ -581,6 +728,7 @@ class MainWindow(QMainWindow):
             f" &nbsp;· Elindeyse: <b style='color:{'#c62828' if held == 'SAT' else '#1b8a3a'}'>"
             f"{held}</b></p>",
             live,
+            short_term_line(result.features.get(s.symbol)),
         ]
         if s.risk:
             p = s.risk
@@ -952,12 +1100,18 @@ class MainWindow(QMainWindow):
         lay.addLayout(bar)
         note = QLabel(
             "Geri test, tarayıcının aynı puan ve sinyal kurallarını geçmişe uygular: T günü "
-            "kapanışta sinyal, T+1'de giriş, komisyon ve kayma dahil. Evren bugünkü endeks "
+            "kapanışta sinyal, T+1'de giriş, komisyon ve kayma dahil. Başlangıç sermayesi "
+            "Ayarlar'daki portföy büyüklüğüdür; lot, işlem başı riskten hesaplanır ve tek "
+            "pozisyon %20, toplam açık risk %5, sektör %25 ile sınırlıdır (en fazla 8 pozisyon). "
+            "Fiyat ve lotlar o günkü işlem fiyatlarıyla gösterilir. Evren bugünkü endeks "
             "üyeleridir (hayatta kalma yanlılığı sonuçları iyimser gösterir)."
         )
         note.setWordWrap(True)
         note.setStyleSheet("color:#666")
         lay.addWidget(note)
+        self.bt_info = QLabel("")
+        self.bt_info.setWordWrap(True)
+        lay.addWidget(self.bt_info)
         split = QSplitter(Qt.Orientation.Horizontal)
         left = QSplitter(Qt.Orientation.Vertical)
         self.bt_metrics_model = RowsModel()
@@ -1062,6 +1216,8 @@ class MainWindow(QMainWindow):
                     "Giriş Fiyatı": float(t.entry_price),
                     "Çıkış Fiyatı": float(t.exit_price),
                     "Lot": int(t.shares),
+                    "Pozisyon TL": int(round(float(t.position_value))),
+                    "Özkaynak %": round(float(t.equity_pct), 1),
                     "Getiri %": round(float(t.return_pct), 2),
                     "R": round(float(t.r_multiple), 2),
                     "K/Z TL": round(float(t.pnl), 0),
@@ -1077,11 +1233,7 @@ class MainWindow(QMainWindow):
             self.bt_canvas.figure, summary.equity, {k: v for k, v in summary.benchmarks.items()}
         )
         self.bt_canvas.draw_idle()
-        self.statusBar().showMessage(
-            f"Geri test {summary.start:%d.%m.%Y} – {summary.end:%d.%m.%Y}, "
-            f"{summary.symbols} hisse, {len(trades)} işlem",
-            15000,
-        )
+        self.bt_info.setText(backtest_info(summary, len(trades)))
 
     def export_backtest(self) -> None:
         if not self.backtest_result:
@@ -1163,6 +1315,25 @@ class MainWindow(QMainWindow):
         form.addRow("İşlem başına risk", self.s_risk)
         form.addRow("", self.s_bear)
         form.addRow("Özel liste sembolleri", self.s_custom)
+        self.s_auto = QCheckBox("Otomatik yenile")
+        self.s_auto.setChecked(self.prefs.auto_refresh)
+        self.s_minutes = QSpinBox()
+        self.s_minutes.setRange(1, 60)
+        self.s_minutes.setSuffix(" dakikada bir")
+        self.s_minutes.setValue(int(self.prefs.refresh_minutes))
+        self.s_minutes.setMaximumWidth(220)
+        auto_row = QHBoxLayout()
+        auto_row.addWidget(self.s_auto)
+        auto_row.addWidget(self.s_minutes)
+        auto_row.addStretch()
+        form.addRow("Yenileme", auto_row)
+        auto_hint = QLabel(
+            "Seans açıkken anlık fiyatlar yenilenir; seans kapanınca (18:15 sonrası) tarama "
+            "kendiliğinden yeniden yapılır ve yeni günün puan ve sinyalleri gelir."
+        )
+        auto_hint.setWordWrap(True)
+        auto_hint.setStyleSheet("color:#666")
+        form.addRow("", auto_hint)
         buttons = QHBoxLayout()
         save = QPushButton("Kaydet")
         save.setStyleSheet("font-weight:bold;padding:6px 18px")
@@ -1218,12 +1389,15 @@ class MainWindow(QMainWindow):
         bear = self.s_bear.isChecked()
         p.block_buys_in_bear = None if bear == base.strategy.block_buys_in_bear else bear
         p.custom_symbols = [s for s in self.s_custom.toPlainText().replace(",", " ").split() if s]
+        p.auto_refresh = self.s_auto.isChecked()
+        p.refresh_minutes = self.s_minutes.value()
         try:
             self.settings()
         except Exception as exc:  # noqa: BLE001
             self.show_error(f"Ayarlar geçersiz: {exc}")
             return
         save_prefs(self.home, p)
+        self._configure_auto_refresh()
         self._update_source_status()
         self.statusBar().showMessage(
             "Ayarlar kaydedildi. Yeni ayarlar bir sonraki taramada kullanılacak.", 8000
@@ -1291,6 +1465,13 @@ bozulması, zaman stop'u ve azami tutma süresini uygular.</li>
 <p>Stop = giriş − 2×ATR, TP1 = 1,5R, TP2 = 2,5R. Lot sayısı, Ayarlar'daki portföy büyüklüğü ve
 işlem başına risk yüzdesine göre hesaplanır. AL için getiri/risk en az asgari değer olmalıdır;
 üstte yakın bir direnç varsa hedef dirençle sınırlanır (Ayarlar'dan kapatılabilir).</p>
+<h3>Gün içi ve T+2 sütunları</h3>
+<p>Çok kısa vadeli işlem için 0-100 arası uygunluk puanlarıdır; başlığa tıklayarak sıralayın.
+<b>Gün içi</b> (aynı gün al-sat): ortalama işlem hacmi (TL), son 10 günün ortalama fiyat aralığı
+(maliyeti karşılayacak kadar geniş ama aşırı olmayan), hacim artışı ve kapanışın günün
+tepesine yakınlığı. <b>T+2</b> (1-2 seans tutma): 3 günlük getiri, EMA20 üstü, RSI, MACD ivmesi,
+oynaklık, hacim ve likidite. Bunlar koşulları sıralar, AL sinyali değildir; son kapanışa göre
+hesaplanır.</p>
 <h3>Veri</h3>
 <p>Gerçek fiyatlar Yahoo Finance'ten (günlük, ~15 dk gecikmeli) indirilir ve veri klasöründe
 önbelleğe alınır. KAP bildirimleri kap.org.tr'den alınır. İnternet yoksa Ayarlar'dan sentetik
