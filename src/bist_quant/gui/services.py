@@ -11,7 +11,13 @@ from pathlib import Path
 import pandas as pd
 
 from bist_quant.config import Settings, apply_overrides, load_settings
-from bist_quant.data.market_data import ISTANBUL_TZ, MarketDataProvider, build_provider
+from bist_quant.data.market_data import (
+    ISTANBUL_TZ,
+    LiveQuote,
+    MarketDataProvider,
+    build_provider,
+    fetch_live_quotes,
+)
 from bist_quant.data.universe import load_universe, normalize_symbol
 from bist_quant.gui.paths import config_dir
 from bist_quant.gui.prefs import Prefs
@@ -76,7 +82,7 @@ def scan(
             end = as_of or datetime.now(ISTANBUL_TZ).date()
             events = await _news_events(settings, symbols, end)
         try:
-            return await run_scan(
+            result = await run_scan(
                 settings,
                 symbols,
                 provider,
@@ -86,8 +92,26 @@ def scan(
             )
         finally:
             await _close(provider)
+        if as_of is None and settings.data.provider == "yahoo" and result.signals:
+            result.live_quotes = await live_quotes(result, [s.symbol for s in result.signals])
+        return result
 
     return asyncio.run(go())
+
+
+async def live_quotes(result: ScanResult, symbols: list[str]) -> dict[str, LiveQuote]:
+    """Delayed intraday prices newer than the scan's close (display only, never scored).
+
+    While the session is open the scanner drops today's partial bar, so the table's
+    close is the previous session's; these quotes show where the price is now.
+    """
+    quotes = await fetch_live_quotes(symbols)
+    return {s: q for s, q in quotes.items() if q.time.date() > result.as_of}
+
+
+def refresh_live_quotes(result: ScanResult) -> ScanResult:
+    result.live_quotes = asyncio.run(live_quotes(result, [s.symbol for s in result.signals]))
+    return result
 
 
 @dataclass

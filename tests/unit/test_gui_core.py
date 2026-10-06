@@ -117,3 +117,23 @@ def test_backtest_summary(demo):
     assert len(bt.equity) > 200
     path = report.export_backtest_excel(bt, home / "bt.xlsx")
     assert path.exists()
+
+
+def test_live_quotes_are_shown_next_to_the_close(demo):
+    from datetime import datetime
+
+    from bist_quant.data.market_data import ISTANBUL_TZ, LiveQuote
+
+    _, _, _, result = demo
+    top = result.signals[0]
+    when = datetime.combine(result.as_of + timedelta(days=1), datetime.min.time(), ISTANBUL_TZ)
+    result.live_quotes = {top.symbol: LiveQuote(top.symbol, top.close * 0.99, when)}
+    try:
+        rows = report.signal_rows(result)
+        assert rows[0]["Son Kapanış"] == top.close
+        assert rows[0]["Anlık %"] == -1.0
+        assert rows[1]["Anlık"] is None
+        assert "Anlık" in report.price_basis(result)
+    finally:
+        result.live_quotes = {}
+    assert "Anlık" not in report.signal_rows(result)[0]

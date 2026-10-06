@@ -157,7 +157,9 @@ class RowsModel(QAbstractTableModel):
             if value is None or (isinstance(value, float) and value != value):
                 return "-"
             if isinstance(value, float):
-                return money(value, 1 if col in {"Puan", "G/R", "R", "K/Z %", "Günlük %"} else 2)
+                return money(
+                    value, 1 if col in {"Puan", "G/R", "R", "K/Z %", "Günlük %", "Anlık %"} else 2
+                )
             if isinstance(value, int) and not isinstance(value, bool) and col != "Sıra":
                 return money(value, 0)
             return str(value)
@@ -169,7 +171,9 @@ class RowsModel(QAbstractTableModel):
             color = self.colors.get(col, {}).get(str(value))
             if color:
                 return QColor(color)
-            if col in {"Günlük %", "K/Z %", "K/Z TL", "R"} and isinstance(value, int | float):
+            if col in {"Günlük %", "Anlık %", "K/Z %", "K/Z TL", "R"} and isinstance(
+                value, int | float
+            ):
                 return QColor("#e8f5e9") if value > 0 else QColor("#ffebee") if value < 0 else None
         if role == Qt.ItemDataRole.ForegroundRole and self.colors.get(col, {}).get(str(value)):
             return QColor("#000000")
@@ -419,6 +423,14 @@ class MainWindow(QMainWindow):
             bar.addWidget(widget)
         bar.addWidget(self.scan_refresh)
         bar.addStretch()
+        self.quote_button = QPushButton("Anlık fiyatları yenile")
+        self.quote_button.setToolTip(
+            "Seans içi son fiyatları (Yahoo, ~15 dk gecikmeli) tabloya ekler. "
+            "Puan ve sinyaller son tamamlanmış seansın kapanışına göre kalır."
+        )
+        self.quote_button.setEnabled(False)
+        self.quote_button.clicked.connect(self.refresh_quotes)
+        bar.addWidget(self.quote_button)
         self.export_buttons = []
         for text, fn in (
             ("Excel'e aktar", self.export_scan_excel),
@@ -485,10 +497,32 @@ class MainWindow(QMainWindow):
     def _scan_done(self, result) -> None:
         self.scan_result = result
         self._set_regime(result)
-        self.scan_summary.setText(" · ".join(report.summary_lines(result)[3:6]))
+        self._set_scan_summary()
         for b in self.export_buttons:
             b.setEnabled(True)
         self._fill_scan_table()
+
+    def _set_scan_summary(self) -> None:
+        lines = report.summary_lines(self.scan_result)
+        self.scan_summary.setText(" · ".join([lines[1], *lines[4:7]]))
+        self.quote_button.setEnabled(self.prefs.provider == "yahoo")
+
+    def refresh_quotes(self) -> None:
+        if not self.scan_result:
+            return
+
+        def done(result) -> None:
+            self.scan_result = result
+            self._set_scan_summary()
+            self._fill_scan_table()
+
+        self.run_task(
+            "Anlık fiyatlar alınıyor...",
+            services.refresh_live_quotes,
+            done,
+            self.scan_result,
+            buttons=[self.quote_button],
+        )
 
     def _fill_scan_table(self) -> None:
         if not self.scan_result:
@@ -530,12 +564,23 @@ class MainWindow(QMainWindow):
         canvas.draw_idle()
         color = SIGNAL_COLOR.get(s.signal, "#ccc")
         held = report.held_view(result, s)
+        q = result.live_quotes.get(s.symbol)
+        live = ""
+        if q:
+            chg = 100 * (q.price / s.close - 1) if s.close else 0.0
+            live = (
+                f"<p style='margin:2px 0'>Anlık: <b>{money(q.price)} TL</b> "
+                f"({chg:+.2f}%, {q.time:%d.%m %H:%M}, ~15 dk gecikmeli). "
+                "Puan ve sinyal seans kapanınca güncellenir.</p>"
+            )
         parts = [
-            f"<h3 style='margin:0'>{s.symbol} · {money(s.close)} TL</h3>",
+            f"<h3 style='margin:0'>{s.symbol} · {money(s.close)} TL "
+            f"<small style='color:#666'>({s.date:%d.%m.%Y} kapanışı)</small></h3>",
             f"<p><span style='background:{color};padding:2px 6px'><b>{signal_text(s.signal)}</b>"
             f"</span> &nbsp;Puan <b>{s.score:.1f}</b>/100 &nbsp;(AL eşiği {s.buy_threshold:.0f})"
             f" &nbsp;· Elindeyse: <b style='color:{'#c62828' if held == 'SAT' else '#1b8a3a'}'>"
             f"{held}</b></p>",
+            live,
         ]
         if s.risk:
             p = s.risk

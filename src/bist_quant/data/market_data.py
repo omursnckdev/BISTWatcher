@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import zlib
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
@@ -61,6 +62,18 @@ def empty_frame() -> pd.DataFrame:
 
 def _slice(frame: pd.DataFrame, start: date, end: date) -> pd.DataFrame:
     return frame.loc[(frame.index >= pd.Timestamp(start)) & (frame.index <= pd.Timestamp(end))]
+
+
+@dataclass
+class LiveQuote:
+    """Last traded price during (or after) a session; not used for signals."""
+
+    symbol: str
+    price: float
+    time: datetime  # Europe/Istanbul
+    previous_close: float | None = None
+    day_high: float | None = None
+    day_low: float | None = None
 
 
 # --------------------------------------------------------------------------- Yahoo
@@ -163,6 +176,33 @@ class YahooChartProvider:
                     )
                     await asyncio.sleep(delay)
         raise DataProviderError(f"{symbol}: request failed ({last_error})")
+
+    async def get_quote(self, symbol: str) -> LiveQuote:
+        """Latest traded price (Yahoo: ~15 minutes delayed for Borsa Istanbul)."""
+        url = self.BASE_URL.format(ticker=self.ticker(symbol))
+        payload = await self._request_json(url, {"range": "1d", "interval": "1d"}, symbol)
+        return self.parse_quote(payload, symbol)
+
+    @staticmethod
+    def parse_quote(payload: dict, symbol: str) -> LiveQuote:
+        chart = payload.get("chart") or {}
+        results = chart.get("result") or []
+        if chart.get("error") or not results:
+            raise DataProviderError(f"{symbol}: no quote ({chart.get('error') or 'empty'})")
+        meta = results[0].get("meta") or {}
+        price, stamp = meta.get("regularMarketPrice"), meta.get("regularMarketTime")
+        if price is None or stamp is None:
+            raise DataProviderError(f"{symbol}: quote without price/time")
+        tz = ZoneInfo(meta.get("exchangeTimezoneName") or "Europe/Istanbul")
+        prev = meta.get("chartPreviousClose", meta.get("previousClose"))
+        return LiveQuote(
+            symbol=symbol,
+            price=float(price),
+            time=datetime.fromtimestamp(int(stamp), tz).astimezone(ISTANBUL_TZ),
+            previous_close=None if prev is None else float(prev),
+            day_high=meta.get("regularMarketDayHigh"),
+            day_low=meta.get("regularMarketDayLow"),
+        )
 
     @staticmethod
     def parse_chart(payload: dict, symbol: str) -> pd.DataFrame:
@@ -411,3 +451,22 @@ def build_provider(settings: Settings) -> MarketDataProvider:
     if data.provider == "csv":
         return CsvProvider(raw_dir)
     return SyntheticProvider()
+
+
+async def fetch_live_quotes(
+    symbols: list[str], timeout: float = 10.0, concurrency: int = 8
+) -> dict[str, LiveQuote]:
+    """Latest Yahoo quotes; symbols that fail are left out (quotes are informational)."""
+    provider = YahooChartProvider(timeout=timeout, max_retries=1, concurrency=concurrency)
+
+    async def one(sym: str) -> LiveQuote | None:
+        try:
+            return await provider.get_quote(sym)
+        except (DataProviderError, httpx.HTTPError, ValueError, KeyError, TypeError):
+            return None
+
+    try:
+        quotes = await asyncio.gather(*(one(s) for s in symbols))
+    finally:
+        await provider.aclose()
+    return {q.symbol: q for q in quotes if q is not None}

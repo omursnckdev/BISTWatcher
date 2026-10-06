@@ -34,6 +34,11 @@ Uygulamanın sekmeleri:
 | **Geri Test** | Aynı kuralların geçmiş performansı: getiri, düşüş, Sharpe, işlem listesi, endeksle karşılaştırmalı özkaynak grafiği. |
 | **Ayarlar** | Veri kaynağı, AL eşiği, direnç sınırı, asgari getiri/risk, portföy büyüklüğü, işlem başı risk, özel liste. |
 
+Puan ve sinyaller her zaman **son tamamlanmış seansın kapanışına** göre hesaplanır; seans
+açıkken yarım günlük mum kullanılmaz. Bu yüzden seans içinde "Son Kapanış" sütunu dünkü
+kapanıştır. Gerçek veride yanına **Anlık** ve **Anlık %** sütunları eklenir (Yahoo, ~15 dk
+gecikmeli); **Anlık fiyatları yenile** düğmesi bunları tarama yapmadan günceller.
+
 Tarama sonuçları **Excel** (AL listesi, SAT uyarıları, portföy, gerekçeler ayrı sayfalarda),
 **HTML** (yazdırılabilir rapor) ve **CSV** olarak kaydedilebilir.
 

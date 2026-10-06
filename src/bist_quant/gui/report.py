@@ -61,6 +61,17 @@ def enabled_components(result: ScanResult) -> list[str]:
     return [k for k in COMPONENT_SHORT if k in comps and comps[k].enabled]
 
 
+def live_columns(result: ScanResult, s: SignalResult) -> dict:
+    """'Anlık' columns, present only when the scan carries intraday quotes."""
+    if not result.live_quotes:
+        return {}
+    q = result.live_quotes.get(s.symbol)
+    return {
+        "Anlık": q.price if q else None,
+        "Anlık %": round(100 * (q.price / s.close - 1), 2) if q and s.close else None,
+    }
+
+
 def signal_rows(result: ScanResult) -> list[dict]:
     """One row per scanned stock, Turkish column names (used by the table and exports)."""
     keys = enabled_components(result)
@@ -73,8 +84,9 @@ def signal_rows(result: ScanResult) -> list[dict]:
             "Puan": round(s.score, 1),
             "Sinyal": signal_text(s.signal),
             "Elindeyse": held_view(result, s),
-            "Kapanış": s.close,
+            "Son Kapanış": s.close,
             "Günlük %": daily_change(result, s.symbol),
+            **live_columns(result, s),
             "Giriş Alt": plan.entry_zone_low if plan else None,
             "Giriş Üst": plan.entry_zone_high if plan else None,
             "Stop": plan.stop if plan else None,
@@ -92,12 +104,22 @@ def signal_rows(result: ScanResult) -> list[dict]:
     return rows
 
 
+def price_basis(result: ScanResult) -> str:
+    """Which price the table shows: signals use the last completed session close."""
+    text = f"Fiyatlar ve sinyaller {result.as_of:%d.%m.%Y} kapanışına göre"
+    if result.live_quotes:
+        last = max(q.time for q in result.live_quotes.values())
+        text += f"; 'Anlık' sütunu seans içi son fiyat ({last:%d.%m %H:%M}, Yahoo ~15 dk gecikmeli)"
+    return text
+
+
 def summary_lines(result: ScanResult) -> list[str]:
     r = result.regime
     counts = pd.Series([signal_text(s.signal) for s in result.signals]).value_counts()
     sells = sum(1 for s in result.signals if held_view(result, s) == "SAT")
     lines = [
         f"Tarih: {result.as_of:%d.%m.%Y}   Veri kaynağı: {result.provider}",
+        price_basis(result),
         f"Piyasa durumu ({r.index}): {regime_text(r.regime)}  "
         f"(piyasa puanı {r.score.points:.1f}/{r.score.max_points:.0f})",
     ]
@@ -154,7 +176,12 @@ def portfolio_rows(holdings: list[Holding], checks: list[ExitCheck], result: Sca
                 "Alış Tarihi": h.entry_date.strftime("%d.%m.%Y"),
                 "Alış": h.entry_price,
                 "Lot": h.shares,
-                "Son Fiyat": c.last_close,
+                "Son Kapanış": c.last_close,
+                **(
+                    {"Anlık": q.price if (q := result.live_quotes.get(c.symbol)) else None}
+                    if result and result.live_quotes
+                    else {}
+                ),
                 "K/Z %": c.pnl_pct,
                 "K/Z TL": c.pnl_try,
                 "R": c.r_multiple,
