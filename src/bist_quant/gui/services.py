@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -26,6 +26,42 @@ from bist_quant.scanner import ScanResult, run_scan
 from bist_quant.strategy.exit_check import ExitCheck, Holding, check_holding
 
 UNIVERSES = ("BIST30", "BIST50", "BIST100", "CUSTOM")
+SESSION_OPEN = time(10, 0)
+SESSION_CLOSE = time(
+    18, 15
+)  # the daily bar is final after this (settings: data.session_close_time)
+
+
+def last_completed_session(now: datetime) -> date:
+    """Most recent weekday whose session has closed (holidays are not known here)."""
+    now = now.astimezone(ISTANBUL_TZ)
+    d = now.date()
+    if d.weekday() >= 5 or now.time() < SESSION_CLOSE:
+        d -= timedelta(days=1)
+    while d.weekday() >= 5:
+        d -= timedelta(days=1)
+    return d
+
+
+def session_open(now: datetime) -> bool:
+    now = now.astimezone(ISTANBUL_TZ)
+    return now.weekday() < 5 and SESSION_OPEN <= now.time() < SESSION_CLOSE
+
+
+def auto_refresh_action(now: datetime, last_scan_as_of: date | None, provider: str) -> str:
+    """What a periodic refresh should do: "scan", "quotes" or "none".
+
+    * no scan yet, or a newer completed session exists (e.g. after 18:15) -> full scan;
+      scores and signals only change when a session closes.
+    * session open with real data -> refresh the delayed intraday prices only.
+    """
+    if last_scan_as_of is None:
+        return "scan"
+    if provider != "yahoo":
+        return "none"
+    if last_completed_session(now) > last_scan_as_of:
+        return "scan"
+    return "quotes" if session_open(now) else "none"
 
 
 def load_app_settings(home: Path, prefs: Prefs) -> Settings:
@@ -158,6 +194,9 @@ class BacktestSummary:
     exit_reasons: pd.DataFrame
     skipped: dict[str, str] = field(default_factory=dict)
     stats: dict = field(default_factory=dict)
+    requested_start: date | None = None
+    requested_end: date | None = None
+    initial_equity: float = 0.0
 
 
 def backtest(
@@ -167,7 +206,14 @@ def backtest(
     start: date | None = None,
     end: date | None = None,
 ) -> BacktestSummary:
-    """Same simulation as ``python -m bist_quant geritest``."""
+    """Same simulation as ``python -m bist_quant geritest``.
+
+    The starting capital is the portfolio size set in the app (``risk.portfolio_equity``),
+    so position sizes match what the scan suggests for the same account.
+    """
+    settings = apply_overrides(
+        settings, {"backtest.initial_equity": settings.risk.portfolio_equity}
+    )
     from bist_quant.backtest.data import load_history
     from bist_quant.backtest.metrics import (
         equity_metrics,
@@ -215,9 +261,40 @@ def backtest(
         benchmark_metrics={n: equity_metrics(s, rf) for n, s in benches.items()},
         equity=result.equity,
         benchmarks=benches,
-        trades=result.trades_frame(),
+        trades=traded_scale(result.trades_frame(), hist.bars, result.equity),
         yearly=yearly,
         exit_reasons=exit_reason_breakdown(result.trades) if result.trades else pd.DataFrame(),
         skipped=hist.skipped,
         stats=dict(result.stats),
+        requested_start=start,
+        requested_end=end,
+        initial_equity=initial,
     )
+
+
+def traded_scale(trades: pd.DataFrame, bars: dict[str, pd.DataFrame], equity: pd.Series):
+    """Express trades in as-traded prices and lots.
+
+    The simulation runs on back-adjusted prices (dividends, bonus issues), so a 2019 entry
+    can show a price the stock never printed and a lot count to match. Converting with the
+    ``raw_close / close`` factor of the entry session keeps the TRY value of the position
+    and turns price and lot into what the screen showed at the time.
+    """
+    if trades.empty:
+        return trades.assign(position_value=[], equity_pct=[])
+    out = trades.copy()
+    factors = []
+    for sym, d in zip(out["symbol"], out["entry_date"], strict=True):
+        f = bars.get(sym)
+        k = 1.0
+        if f is not None and d in f.index and f.at[d, "close"] > 0:
+            k = float(f.at[d, "raw_close"] / f.at[d, "close"])
+        factors.append(k if k > 0 else 1.0)
+    k = pd.Series(factors, index=out.index)
+    out["position_value"] = out["shares"] * out["entry_price"]
+    out["entry_price"] = out["entry_price"] * k
+    out["exit_price"] = out["exit_price"] * k
+    out["shares"] = (out["shares"] / k).round().astype(int)
+    eq = equity.reindex(pd.DatetimeIndex(out["entry_date"]), method="ffill").to_numpy()
+    out["equity_pct"] = 100 * out["position_value"] / eq
+    return out

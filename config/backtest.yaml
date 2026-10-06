@@ -15,6 +15,7 @@ backtest:
   slippage_pct: 0.001        # per side, applied against us on every fill
   risk_free_rate_annual_pct: 0.0   # for Sharpe/Sortino (TRY deposit rates are far from 0!)
   cash_interest_annual_pct: 0.0    # interest earned on idle cash (e.g. money-market fund)
+  min_position_pct: 2.0      # skip entries smaller than this % of equity (leftover capacity)
   exits:
     tp1_fraction: 0.5        # share of the position sold at TP1
     breakeven_after_tp1: true

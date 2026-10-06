@@ -273,6 +273,9 @@ class BacktestSettings(BaseModel):
     slippage_pct: float = Field(0.001, ge=0)
     risk_free_rate_annual_pct: float = 0.0
     cash_interest_annual_pct: float = 0.0
+    # Skip entries whose size (after risk / cash / sector caps) is below this % of equity:
+    # leftover capacity would otherwise open token positions of a few shares.
+    min_position_pct: float = Field(2.0, ge=0, le=100)
     exits: ExitSettings = Field(default_factory=ExitSettings)
 
 
