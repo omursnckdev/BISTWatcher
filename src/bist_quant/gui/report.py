@@ -24,6 +24,7 @@ from bist_quant.gui.texts import (
 from bist_quant.models.signals import SignalResult, SignalType
 from bist_quant.scanner import ScanResult
 from bist_quant.strategy.exit_check import ExitAction, ExitCheck, Holding, trend_exit_triggered
+from bist_quant.strategy.short_term import short_term_score
 
 BUY_SIGNALS = {SignalType.STRONG_BUY_CANDIDATE, SignalType.BUY_CANDIDATE}
 PLAN_SIGNALS = BUY_SIGNALS | {SignalType.WEAK_SETUP}
@@ -87,6 +88,7 @@ def signal_rows(result: ScanResult) -> list[dict]:
             "Son Kapanış": s.close,
             "Günlük %": daily_change(result, s.symbol),
             **live_columns(result, s),
+            **short_term_columns(result, s.symbol),
             "Giriş Alt": plan.entry_zone_low if plan else None,
             "Giriş Üst": plan.entry_zone_high if plan else None,
             "Stop": plan.stop if plan else None,
@@ -102,6 +104,12 @@ def signal_rows(result: ScanResult) -> list[dict]:
         row["Not"] = "; ".join(tr(x) for x in s.explanation.filters)
         rows.append(row)
     return rows
+
+
+def short_term_columns(result: ScanResult, symbol: str) -> dict:
+    """0-100 suitability for a same-day trade and for a 1-2 session (T+2) hold."""
+    st = short_term_score(result.features.get(symbol))
+    return {"Gün içi": st.intraday if st else None, "T+2": st.two_day if st else None}
 
 
 def price_basis(result: ScanResult) -> str:

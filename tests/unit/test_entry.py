@@ -24,10 +24,19 @@ def test_bands_in_bull():
 
 
 def test_regime_raises_threshold():
-    assert cls(68, MarketRegime.NEUTRAL)[0] is SignalType.WEAK_SETUP
-    assert cls(70, MarketRegime.NEUTRAL)[0] is SignalType.BUY_CANDIDATE
-    assert cls(79, MarketRegime.BEAR)[0] is SignalType.WEAK_SETUP
-    assert cls(80, MarketRegime.BEAR)[0] is SignalType.BUY_CANDIDATE
+    stepped = StrategySettings(
+        buy_threshold={
+            MarketRegime.BULL: 60,
+            MarketRegime.NEUTRAL: 70,
+            MarketRegime.HIGH_VOLATILITY: 75,
+            MarketRegime.BEAR: 80,
+        }
+    )
+    assert cls(68, MarketRegime.NEUTRAL, strategy=stepped)[0] is SignalType.WEAK_SETUP
+    assert cls(70, MarketRegime.NEUTRAL, strategy=stepped)[0] is SignalType.BUY_CANDIDATE
+    assert cls(79, MarketRegime.BEAR, strategy=stepped)[0] is SignalType.WEAK_SETUP
+    assert cls(80, MarketRegime.BEAR, strategy=stepped)[0] is SignalType.BUY_CANDIDATE
+    assert cls(60, MarketRegime.BEAR)[0] is SignalType.BUY_CANDIDATE  # default: 60 everywhere
     assert cls(90, MarketRegime.BEAR)[0] is SignalType.STRONG_BUY_CANDIDATE
 
 
