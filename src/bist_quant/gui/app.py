@@ -94,6 +94,21 @@ from bist_quant.gui.texts import (  # noqa: E402
 from bist_quant.models.signals import MarketRegime, SignalType  # noqa: E402
 from bist_quant.strategy.exit_check import ExitAction, Holding  # noqa: E402
 
+SIGNED_COLUMNS = {"Günlük %", "Anlık %", "K/Z %", "K/Z TL", "R"}
+SIGNED_TEXT_LIGHT = ("#1b7a34", "#c62828")  # (up, down) on a light table
+SIGNED_TEXT_DARK = ("#5fd37a", "#ff7b7b")  # (up, down) on a dark table
+
+
+def signed(value) -> bool:
+    """A non-zero number (NaN and missing values stay uncoloured)."""
+    return isinstance(value, int | float) and not isinstance(value, bool) and value == value != 0
+
+
+def dark_theme() -> bool:
+    app = QApplication.instance()
+    return bool(app) and app.palette().base().color().lightness() < 128
+
+
 APP_NAME = "BISTWatcher"
 REGIME_COLOR = {
     MarketRegime.BULL: "#1b8a3a",
@@ -175,12 +190,18 @@ class RowsModel(QAbstractTableModel):
             color = self.colors.get(col, {}).get(str(value))
             if color:
                 return QColor(color)
-            if col in {"Günlük %", "Anlık %", "K/Z %", "K/Z TL", "R"} and isinstance(
-                value, int | float
-            ):
-                return QColor("#e8f5e9") if value > 0 else QColor("#ffebee") if value < 0 else None
-        if role == Qt.ItemDataRole.ForegroundRole and self.colors.get(col, {}).get(str(value)):
-            return QColor("#000000")
+        if role == Qt.ItemDataRole.ForegroundRole:
+            if self.colors.get(col, {}).get(str(value)):
+                return QColor("#000000")
+            # Signed changes: coloured text on the normal background. Pale tints behind
+            # the default text were unreadable, especially with the Windows dark theme.
+            if col in SIGNED_COLUMNS and signed(value):
+                up, down = SIGNED_TEXT_DARK if dark_theme() else SIGNED_TEXT_LIGHT
+                return QColor(up if value > 0 else down)
+        if role == Qt.ItemDataRole.FontRole and col in SIGNED_COLUMNS and signed(value):
+            font = QFont()
+            font.setBold(True)
+            return font
         numeric = isinstance(value, int | float) and not isinstance(value, bool)
         if role == Qt.ItemDataRole.TextAlignmentRole and numeric:
             return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
