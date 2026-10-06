@@ -1,5 +1,6 @@
 """Telegram bot: commands, messages and alerts (no network: a mock transport)."""
 
+import importlib.util
 import json
 import time
 from dataclasses import replace
@@ -56,7 +57,8 @@ def test_messages_from_a_scan(demo):
     caption = tb.analysis_caption(result, s.symbol)
     assert s.symbol in caption and "Sinyal" in caption and len(caption) <= 1024
     assert "analiz edilemedi" in tb.analysis_caption(result, "YOKBOYLE")
-    assert tb.chart_png(result, s.symbol).startswith(b"\x89PNG")
+    if importlib.util.find_spec("matplotlib"):  # the gui extra; CI tests without it
+        assert tb.chart_png(result, s.symbol).startswith(b"\x89PNG")
     holding = Holding(s.symbol, s.date - timedelta(days=30), s.close * 0.95, 100)
     pr = services.check_portfolio(settings, [holding], symbols)
     assert s.symbol in tb.portfolio_text([holding], pr)
