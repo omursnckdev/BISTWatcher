@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import threading
+from dataclasses import replace
 from datetime import datetime
 
 from PySide6.QtCore import QObject, Qt, Signal
@@ -34,7 +35,8 @@ from bist_quant.gui import telegram_bot as tb
 class TelegramController(QObject):
     message = Signal(object)  # tb.Incoming, from the polling thread
     status = Signal(str, bool)  # text, running ok
-    chat_seen = Signal(int, str)  # an unauthorised chat sent /start
+    chat_seen = Signal(int, str, bool)  # an unauthorised chat sent /start (id, name, group)
+    chats_changed = Signal()
 
     def __init__(self, window) -> None:
         super().__init__(window)
@@ -52,7 +54,7 @@ class TelegramController(QObject):
     # ------------------------------------------------------------ lifecycle
     @property
     def active(self) -> bool:
-        return self.runner is not None and bool(self.cfg.chat_id)
+        return self.runner is not None and bool(self.cfg.chat_ids)
 
     def start(self) -> None:
         self.stop()
@@ -69,17 +71,29 @@ class TelegramController(QObject):
             self.runner = None
 
     def apply(self, cfg: tb.TelegramConfig) -> None:
+        same_bot = self.runner is not None and cfg.ready and cfg.token == self.cfg.token
         self.cfg = cfg
         tb.save_config(self.home, cfg)
-        self.start()
+        if same_bot:
+            self.runner.cfg = cfg  # chats or notification choices only: keep polling
+        else:
+            self.start()
 
-    def send_test(self) -> bool:
+    def send_test(self, chat_id: int | None = None) -> bool:
+        """To one chat, or to every authorised chat."""
         if not self.active:
             return False
         self.runner.send(
-            "✅ BISTWatcher test mesajı. Bildirimler bu sohbete gelecek.\n\n" + tb.help_text()
+            "✅ BISTWatcher test mesajı. Bildirimler bu sohbete gelecek.\n\n" + tb.help_text(),
+            chat_id,
         )
         return True
+
+    def _migrate(self, old: int, new: int) -> None:
+        """A group turned into a supergroup and got a new id: keep it authorised."""
+        ids = [new if c == old else c for c in self.cfg.chat_ids]
+        self.apply(replace(self.cfg, chat_ids=list(dict.fromkeys(ids))))
+        self.chats_changed.emit()
 
     def _remember_status(self, text: str, ok: bool) -> None:
         self.last_status = (text, ok)
@@ -139,22 +153,25 @@ class TelegramController(QObject):
     def _handle(self, msg: tb.Incoming) -> None:
         if not self.runner:
             return
-        cmd = tb.parse_command(msg.text)
+        if msg.migrated_to:
+            if msg.authorized:
+                self._migrate(msg.chat_id, msg.migrated_to)
+            return
+        cmd = tb.parse_command(msg.text, self.runner.bot_name)
         if not msg.authorized:
             if cmd and cmd[0] == "start":
-                self.runner.send(
-                    tb.welcome_text(msg.chat_id, False, bool(self.cfg.chat_id)), msg.chat_id
-                )
-                self.chat_seen.emit(msg.chat_id, msg.name)
+                self.runner.send(tb.welcome_text(msg.chat_id, False, msg.group), msg.chat_id)
+                self.chat_seen.emit(msg.chat_id, msg.name, msg.group)
             return
         send = lambda text: self.runner.send(text, msg.chat_id)  # noqa: E731
         if cmd is None:
-            send("Komutlar için /yardim yazın.")
+            if not msg.group:  # group members talk among themselves; stay quiet there
+                send("Komutlar için /yardim yazın.")
             return
         name, args = cmd
         w = self.win
         if name == "start":
-            send(tb.welcome_text(msg.chat_id, True, True))
+            send(tb.welcome_text(msg.chat_id, True, msg.group))
         elif name == "yardim":
             send(tb.help_text())
         elif name == "durum":
@@ -248,14 +265,24 @@ SETUP_HELP = """
 sonu <i>bot</i> ile biten bir kullanıcı adı verin.</li>
 <li>BotFather'ın verdiği <b>token</b>'ı aşağıya yapıştırın, <b>Botu etkinleştir</b>'i
 işaretleyip <b>Kaydet ve başlat</b>'a basın.</li>
-<li>Telegram'da kendi botunuzu açıp <code>/start</code> yazın. Sohbet kimliğiniz burada
-görünür; <b>Bu sohbeti kullan</b>'a basın.</li>
+<li>Telegram'da kendi botunuzu açıp <code>/start</code> yazın. Sohbetin kimliği burada
+görünür; <b>Bu sohbeti ekle</b>'ye basın.</li>
 <li><b>Test mesajı gönder</b> ile deneyin.</li>
 </ol>
+<b>Grupta kullanmak için</b>
+<ol>
+<li>Grubun ayarlarından <b>Üye ekle</b> ile botu (kullanıcı adıyla) gruba ekleyin.</li>
+<li>Grupta <code>/start@BotAdi</code> yazın; grubun kimliği (eksi ile başlar) burada
+görünür, <b>Bu sohbeti ekle</b>'ye basın.</li>
+</ol>
+Gruptaki her üye komutları kullanabilir; bildirimler eklenen bütün sohbetlere ve gruplara
+gider. Komutlar BotFather'ın gizlilik ayarı açıkken de çalışır; değiştirmenize gerek yok.
+Botu başka kişilerin özel sohbetinde de kullanmak için o kişi bota <code>/start</code>
+yazmalı ve siz onu da eklemelisiniz.<br><br>
 <b>Komutlar:</b> /portfoy, /tara, /analiz BRSAN, /durum, /yenile, /yardim<br>
 Bot, bu uygulama açıkken çalışır (bilgisayar uyku modunda olmamalı). Yalnızca
-yetkilendirdiğiniz sohbet yanıt alır. Token, veri klasöründeki telegram.json dosyasında
-saklanır; kimseyle paylaşmayın.
+listedeki sohbetler ve gruplar yanıt alır. Portföy, bu uygulamadaki tek portföydür.
+Token, veri klasöründeki telegram.json dosyasında saklanır; kimseyle paylaşmayın.
 """
 
 
@@ -281,12 +308,14 @@ class TelegramTab(QWidget):
         token_row = QHBoxLayout()
         token_row.addWidget(self.token)
         token_row.addWidget(show)
-        self.chat = QLineEdit("" if cfg.chat_id is None else str(cfg.chat_id))
-        self.chat.setPlaceholderText("Bota /start yazınca burada görünür")
-        self.chat.setMaximumWidth(220)
+        self.chat = QLineEdit(", ".join(map(str, cfg.chat_ids)))
+        self.chat.setPlaceholderText("Bota ya da gruba /start yazınca buraya eklenir")
+        self.chat.setToolTip(
+            "Virgülle ayrılmış sohbet kimlikleri; grupların kimliği eksiyle başlar"
+        )
         self.seen = QLabel("")
         self.seen.setWordWrap(True)
-        self.use_seen = QPushButton("Bu sohbeti kullan")
+        self.use_seen = QPushButton("Bu sohbeti ekle")
         self.use_seen.hide()
         self.use_seen.clicked.connect(self._use_seen)
         self._seen_id: int | None = None
@@ -305,7 +334,7 @@ class TelegramTab(QWidget):
         self.state_label.setTextFormat(Qt.TextFormat.RichText)
         form.addRow("", self.enabled)
         form.addRow("Bot token", token_row)
-        form.addRow("Sohbet kimliği (chat id)", self.chat)
+        form.addRow("Yetkili sohbetler / gruplar", self.chat)
         form.addRow("", seen_row)
         form.addRow("Bildirimler", self.n_portfolio)
         form.addRow("", self.n_levels)
@@ -329,13 +358,16 @@ class TelegramTab(QWidget):
         outer.addLayout(side, 2)
         controller.status.connect(self._show_status)
         controller.chat_seen.connect(self._chat_seen)
+        controller.chats_changed.connect(
+            lambda: self.chat.setText(", ".join(map(str, controller.cfg.chat_ids)))
+        )
         self._show_status(*controller.last_status)
 
     def config(self) -> tb.TelegramConfig:
         return tb.TelegramConfig(
             enabled=self.enabled.isChecked(),
             token=self.token.text().strip(),
-            chat_id=tb.parse_chat_id(self.chat.text()),
+            chat_ids=tb.parse_chat_ids(self.chat.text()),
             notify_portfolio=self.n_portfolio.isChecked(),
             notify_buys=self.n_buys.isChecked(),
             notify_levels=self.n_levels.isChecked(),
@@ -356,21 +388,25 @@ class TelegramTab(QWidget):
 
     def _show_status(self, text: str, ok: bool) -> None:
         color = "#1b8a3a" if ok else "#c62828"
-        extra = "" if not ok or self.ctl.cfg.chat_id else " · sohbet kimliği bekleniyor"
+        extra = "" if not ok or self.ctl.cfg.chat_ids else " · sohbet kimliği bekleniyor"
         self.state_label.setText(f"<b style='color:{color}'>{text}</b>{extra}")
 
-    def _chat_seen(self, chat_id: int, name: str) -> None:
+    def _chat_seen(self, chat_id: int, name: str, group: bool) -> None:
         self._seen_id = chat_id
+        kind = "Grup" if group else "Sohbet"
         who = f"{name} " if name else ""
-        self.seen.setText(f"/start gönderen: {who}(kimlik {chat_id})")
+        self.seen.setText(f"/start gönderen {kind.lower()}: {who}(kimlik {chat_id})")
         self.use_seen.show()
 
     def _use_seen(self) -> None:
         if self._seen_id is None:
             return
-        self.chat.setText(str(self._seen_id))
+        ids = tb.parse_chat_ids(self.chat.text())
+        if self._seen_id not in ids:
+            ids.append(self._seen_id)
+        self.chat.setText(", ".join(map(str, ids)))
         self.enabled.setChecked(True)
         self.ctl.apply(self.config())
         self.use_seen.hide()
-        self.seen.setText("Sohbet yetkilendirildi.")
-        self.ctl.send_test()
+        self.seen.setText("Eklendi.")
+        self.ctl.send_test(self._seen_id)

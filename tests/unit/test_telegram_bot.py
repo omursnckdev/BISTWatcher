@@ -28,12 +28,13 @@ def demo(tmp_path_factory):
 
 def test_config_round_trip(tmp_path):
     assert tb.load_config(tmp_path) == tb.TelegramConfig()
-    cfg = tb.TelegramConfig(enabled=True, token="1:abc", chat_id=42, notify_buys=False)
+    cfg = tb.TelegramConfig(enabled=True, token="1:abc", chat_ids=[42, -1001], notify_buys=False)
     tb.save_config(tmp_path, cfg)
     assert tb.load_config(tmp_path) == cfg
     assert cfg.ready
     (tmp_path / tb.CONFIG_FILE).write_text('{"chat_id": " 77 "}', encoding="utf-8")
-    assert tb.load_config(tmp_path).chat_id == 77
+    assert tb.load_config(tmp_path).chat_ids == [77]  # first-version file
+    assert tb.parse_chat_ids("42, -100123 x 42") == [42, -100123]
 
 
 def test_parse_command():
@@ -41,6 +42,8 @@ def test_parse_command():
     assert tb.parse_command("/Portföy") == ("portfoy", [])
     assert tb.parse_command("/yardım") == ("yardim", [])
     assert tb.parse_command("merhaba") is None
+    assert tb.parse_command("/tara@BistBot", "bistbot") == ("tara", [])
+    assert tb.parse_command("/tara@BaskaBot", "BistBot") is None
 
 
 def test_split_long_text():
@@ -165,31 +168,45 @@ class FakeTelegram:
         return httpx.Response(200, json={"ok": True, "result": True})
 
 
-def _update(uid, chat_id, text):
+def _update(uid, chat_id, text, kind="private"):
     return {
         "update_id": uid,
-        "message": {"date": int(time.time()), "chat": {"id": chat_id}, "text": text},
+        "message": {
+            "date": int(time.time()),
+            "chat": {"id": chat_id, "type": kind},
+            "text": text,
+        },
     }
 
 
 def test_runner_answers_only_the_authorised_chat():
-    fake = FakeTelegram([_update(1, 42, "/durum"), _update(2, 99, "/portfoy")])
-    cfg = tb.TelegramConfig(enabled=True, token="1:x", chat_id=42)
+    fake = FakeTelegram(
+        [
+            _update(1, 42, "/durum"),
+            _update(2, 99, "/portfoy"),
+            _update(3, -500, "/tara@TestBot", "group"),
+        ]
+    )
+    cfg = tb.TelegramConfig(enabled=True, token="1:x", chat_ids=[42, -500])
     api = tb.TelegramApi(cfg.token, httpx.Client(transport=httpx.MockTransport(fake)))
     got, statuses = [], []
     runner = tb.BotRunner(cfg, got.append, lambda t, ok: statuses.append((t, ok)), api)
     runner.start()
     deadline = time.time() + 5
-    while len(got) < 2 and time.time() < deadline:
+    while len(got) < 3 and time.time() < deadline:
         time.sleep(0.02)
-    runner.send("merhaba")
-    while not any(m == "sendMessage" for m, _ in fake.sent) and time.time() < deadline:
+    runner.send("merhaba")  # an alert: every authorised chat
+    while sum(m == "sendMessage" for m, _ in fake.sent) < 2 and time.time() < deadline:
         time.sleep(0.02)
     runner.stop()
-    assert [(m.chat_id, m.authorized) for m in got] == [(42, True), (99, False)]
+    assert [(m.chat_id, m.authorized, m.group) for m in got] == [
+        (42, True, False),
+        (99, False, False),
+        (-500, True, True),
+    ]
     assert statuses[0] == ("Çalışıyor: @TestBot", True)
     texts = [(b["chat_id"], b["text"]) for m, b in fake.sent if m == "sendMessage"]
-    assert texts == [(42, "merhaba")]
+    assert texts == [(42, "merhaba"), (-500, "merhaba")]
     assert any(m == "setMyCommands" for m, _ in fake.sent)
 
 
@@ -199,7 +216,7 @@ def test_runner_reports_a_bad_token():
             401, json={"ok": False, "error_code": 401, "description": "Unauthorized"}
         )
 
-    cfg = tb.TelegramConfig(enabled=True, token="bad", chat_id=1)
+    cfg = tb.TelegramConfig(enabled=True, token="bad", chat_ids=[1])
     api = tb.TelegramApi(cfg.token, httpx.Client(transport=httpx.MockTransport(handler)))
     statuses = []
     runner = tb.BotRunner(cfg, lambda m: None, lambda t, ok: statuses.append((t, ok)), api)

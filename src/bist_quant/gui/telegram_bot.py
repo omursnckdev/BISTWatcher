@@ -1,9 +1,10 @@
 """Telegram bot for the desktop app (Qt-free).
 
 The bot runs inside the open app and uses long polling, so it needs no inbound port
-and works on a home connection. Only the configured chat gets answers; any other chat
-that sends ``/start`` is told its chat id (so the owner can authorise it in the app)
-and nothing else.
+and works on a home connection. Only the authorised chats get answers: private chats
+and groups, where every member can use the commands (``/tara`` or ``/tara@BotAdi``).
+Alerts go to every authorised chat. Any other chat that sends ``/start`` is told its
+chat id (so the owner can authorise it in the app) and nothing else.
 
 * :class:`TelegramApi` is a thin HTTP client for the Bot API.
 * :class:`BotRunner` polls for messages and sends replies on background threads.
@@ -77,7 +78,7 @@ ALIASES = {
 class TelegramConfig:
     enabled: bool = False
     token: str = ""
-    chat_id: int | None = None
+    chat_ids: list[int] = field(default_factory=list)  # private chats and groups (< 0)
     notify_portfolio: bool = True  # held position decision / signal changes
     notify_buys: bool = True  # new AL signals after a scan
     notify_levels: bool = True  # intraday price crossing a held position's stop / targets
@@ -93,11 +94,14 @@ def load_config(home: Path) -> TelegramConfig:
     except (OSError, ValueError):
         return TelegramConfig()
     known = {f.name for f in fields(TelegramConfig)}
+    ids = raw.get("chat_ids") if isinstance(raw.get("chat_ids"), list) else []
+    if raw.get("chat_id") is not None:  # single-chat files from the first version
+        ids = [raw["chat_id"], *ids]
     try:
-        cfg = TelegramConfig(**{k: v for k, v in raw.items() if k in known})
+        cfg = TelegramConfig(**{k: v for k, v in raw.items() if k in known - {"chat_ids"}})
     except TypeError:
         return TelegramConfig()
-    cfg.chat_id = parse_chat_id(cfg.chat_id)
+    cfg.chat_ids = parse_chat_ids(" ".join(map(str, ids)))
     return cfg
 
 
@@ -105,11 +109,14 @@ def save_config(home: Path, cfg: TelegramConfig) -> None:
     (home / CONFIG_FILE).write_text(json.dumps(asdict(cfg), indent=2), encoding="utf-8")
 
 
-def parse_chat_id(value) -> int | None:
-    try:
-        return int(str(value).strip())
-    except (TypeError, ValueError):
-        return None
+def parse_chat_ids(text: str) -> list[int]:
+    """``"123, -100456"`` -> [123, -100456]; anything that is not a number is dropped."""
+    out: list[int] = []
+    for part in str(text or "").replace(",", " ").replace(";", " ").split():
+        with contextlib.suppress(ValueError):
+            if (n := int(part)) not in out:
+                out.append(n)
+    return out
 
 
 # ------------------------------------------------------------------ Bot API
@@ -196,13 +203,19 @@ def split_text(text: str, limit: int = 4000) -> list[str]:
     return parts
 
 
-def parse_command(text: str) -> tuple[str, list[str]] | None:
-    """``/analiz@MyBot brsan`` -> ("analiz", ["BRSAN"]); plain text -> None."""
+def parse_command(text: str, bot_name: str = "") -> tuple[str, list[str]] | None:
+    """``/analiz@MyBot brsan`` -> ("analiz", ["BRSAN"]); plain text -> None.
+
+    In a group, ``/tara@BaskaBot`` is meant for another bot and also gives None.
+    """
     text = (text or "").strip()
-    if not text.startswith("/"):
+    if not text.startswith("/") or len(text) < 2:
         return None
     head, *args = text[1:].split()
-    name = head.split("@", 1)[0].lower()
+    name, _, target = head.partition("@")
+    if target and bot_name and target.lower() != bot_name.lower():
+        return None
+    name = name.lower()
     name = ALIASES.get(name, name)
     return name, [a.upper() for a in args]
 
@@ -216,6 +229,8 @@ class Incoming:
     name: str
     text: str
     authorized: bool
+    group: bool = False
+    migrated_to: int | None = None  # a group became a supergroup with a new id
 
 
 class BotRunner:
@@ -253,13 +268,12 @@ class BotRunner:
         self.outbox.put(None)
 
     def send(self, text: str, chat_id: int | None = None) -> None:
-        target = chat_id or self.cfg.chat_id
-        if target:
+        """To one chat, or (no ``chat_id``) to every authorised chat."""
+        for target in [chat_id] if chat_id else list(self.cfg.chat_ids):
             self.outbox.put(("text", target, text, None))
 
     def send_photo(self, png: bytes, caption: str, chat_id: int | None = None) -> None:
-        target = chat_id or self.cfg.chat_id
-        if target:
+        for target in [chat_id] if chat_id else list(self.cfg.chat_ids):
             self.outbox.put(("photo", target, caption, png))
 
     # -- threads
@@ -295,6 +309,8 @@ class BotRunner:
             if updates and offset is None:
                 self.on_status(f"Çalışıyor: @{self.bot_name}", True)
             for u in updates:
+                if self.stop_event.is_set():
+                    return  # not confirmed: a restarted runner receives them again
                 offset = u["update_id"] + 1
                 self._dispatch(u)
 
@@ -302,12 +318,20 @@ class BotRunner:
         msg = update.get("message") or {}
         chat = msg.get("chat") or {}
         text = msg.get("text") or ""
-        if not chat or not text:
+        migrated = msg.get("migrate_to_chat_id")
+        if not chat or not (text or migrated):
             return
-        if time.time() - msg.get("date", 0) > STALE_SECONDS:
+        if not migrated and time.time() - msg.get("date", 0) > STALE_SECONDS:
             return
-        name = chat.get("first_name") or chat.get("title") or chat.get("username") or ""
-        incoming = Incoming(int(chat["id"]), name, text, chat["id"] == self.cfg.chat_id)
+        name = chat.get("title") or chat.get("first_name") or chat.get("username") or ""
+        incoming = Incoming(
+            int(chat["id"]),
+            name,
+            text,
+            int(chat["id"]) in self.cfg.chat_ids,
+            group=chat.get("type") in ("group", "supergroup"),
+            migrated_to=int(migrated) if migrated else None,
+        )
         try:
             self.on_message(incoming)
         except Exception as exc:  # noqa: BLE001 - a bad command must not stop polling
@@ -345,18 +369,14 @@ def pct(x: float | None) -> str:
     return "-" if x is None else f"{'+' if x > 0 else ''}{money(x, 2)}%"
 
 
-def welcome_text(chat_id: int, authorized: bool, configured: bool) -> str:
+def welcome_text(chat_id: int, authorized: bool, group: bool = False) -> str:
     if authorized:
         return "BISTWatcher botu bağlı.\n\n" + help_text()
-    if configured:
-        return (
-            f"Bu bot özel. Sohbet kimliğiniz: <code>{chat_id}</code>. Bu sizseniz "
-            "BISTWatcher'da Telegram sekmesinden bu kimliği yetkilendirin."
-        )
+    what = "Bu grubun kimliği" if group else "Sohbet kimliğiniz"
     return (
-        f"Merhaba! Sohbet kimliğiniz: <code>{chat_id}</code>\n"
-        "BISTWatcher'da Telegram sekmesinde <b>Bu sohbeti kullan</b> düğmesine basın "
-        "(ya da kimliği elle girip kaydedin)."
+        f"{what}: <code>{chat_id}</code>\n"
+        "Bot henüz bu sohbette yetkili değil. BISTWatcher'ın Telegram sekmesinde "
+        "<b>Bu sohbeti ekle</b> düğmesine basın (ya da kimliği listeye yazıp kaydedin)."
     )
 
 
@@ -366,7 +386,8 @@ def help_text() -> str:
         "",
         "Bildirimler: portföyünüzdeki bir hissenin kararı değişince (örn. TUT → SAT), "
         "seans içinde fiyat stop ya da hedefe gelince ve tarama sonrası yeni AL sinyali "
-        "çıkınca mesaj gelir. Bot, bilgisayarınızda BISTWatcher açıkken çalışır.",
+        "çıkınca mesaj gelir. Grupta komutları her üye kullanabilir "
+        "(örn. /tara ya da /tara@BotAdi). Bot, BISTWatcher açık olan bilgisayarda çalışır.",
     ]
     return "\n".join(lines)
 
@@ -658,9 +679,7 @@ def portfolio_alerts(state: AlertState, holdings: list[Holding], report) -> list
             changes.append(f"karar {before}<b>{now['karar']}</b>")
         if prev is not None and prev.get("sinyal") != now["sinyal"]:
             changes.append(f"sinyal {prev.get('sinyal')} → <b>{now['sinyal']}</b>")
-        head = f"{ACTION_ICON[c.action]} <b>{esc(c.symbol)}</b> (portföyünüzde): " + ", ".join(
-            changes
-        )
+        head = f"{ACTION_ICON[c.action]} <b>{esc(c.symbol)}</b> (portföyde): " + ", ".join(changes)
         out.append("\n".join([head, *holding_lines(h, c, report.scan)[1:]]))
     for sym in list(state.holdings):
         if sym not in seen and sym not in {h.symbol for h in holdings}:
