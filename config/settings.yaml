@@ -71,7 +71,11 @@ risk:
   tp2_r: 2.5
   minimum_rr: 2.0
   entry_zone_atr: 0.25        # entry zone = close +/- this * ATR
-  use_resistance_cap: true    # cap reward at overhead resistance when it sits below TP2
+  # Cap reward at overhead resistance when it sits below TP2. Off since 2026-10-06: with the
+  # cap a 60+ score near resistance stayed WEAK_SETUP (R/R < minimum). Real BIST100 backtest
+  # 2016-2026 at threshold 60: cap off CAGR 28.2% / Sharpe 1.43 / max DD -26% vs cap on
+  # 21.9% / 1.22 / -25% (2023+ max DD -30% vs -24%), about twice the BUY candidates.
+  use_resistance_cap: false
   resistance_lookback: 120
   portfolio_equity: 500000    # TRY
   risk_per_trade_pct: 1.0

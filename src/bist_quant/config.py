@@ -118,7 +118,7 @@ class RiskSettings(BaseModel):
     tp2_r: float = Field(2.5, gt=0)
     minimum_rr: float = Field(2.0, gt=0)
     entry_zone_atr: float = Field(0.25, ge=0)
-    use_resistance_cap: bool = True
+    use_resistance_cap: bool = False
     resistance_lookback: int = Field(120, ge=5)
     portfolio_equity: float = Field(500_000, gt=0)
     risk_per_trade_pct: float = Field(1.0, gt=0, le=100)

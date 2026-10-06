@@ -1464,7 +1464,7 @@ bozulması, zaman stop'u ve azami tutma süresini uygular.</li>
 <h3>Risk planı</h3>
 <p>Stop = giriş − 2×ATR, TP1 = 1,5R, TP2 = 2,5R. Lot sayısı, Ayarlar'daki portföy büyüklüğü ve
 işlem başına risk yüzdesine göre hesaplanır. AL için getiri/risk en az asgari değer olmalıdır;
-üstte yakın bir direnç varsa hedef dirençle sınırlanır (Ayarlar'dan kapatılabilir).</p>
+Ayarlar'da açılırsa üstteki yakın direnç hedefi sınırlar (varsayılan: kapalı).</p>
 <h3>Gün içi ve T+2 sütunları</h3>
 <p>Çok kısa vadeli işlem için 0-100 arası uygunluk puanlarıdır; başlığa tıklayarak sıralayın.
 <b>Gün içi</b> (aynı gün al-sat): ortalama işlem hacmi (TL), son 10 günün ortalama fiyat aralığı

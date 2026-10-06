@@ -190,9 +190,12 @@ Daha fazla aday görmek için:
   55 yapar ve diğer durumları da aynı miktarda (5 puan) indirir.
 - **Kalıcı olarak:** `config/settings.yaml` içindeki `strategy.buy_threshold` değerlerini
   değiştirin.
-- **Direnç kontrolünü kapatmak için:** `config/settings.yaml` içinde
-  `risk.use_resistance_cap: false` yapın. Bu, direnç yüzünden düşük görünen getiri/risk
-  oranını yok sayar. Riski artırır, dikkatli kullanın.
+- **Direnç kontrolü** varsayılan olarak kapalı (Ekim 2026). Açıkken üstte yakın bir direnç
+  olan hissenin hedefi dirençle sınırlanır ve getiri/risk 2'nin altına düşerse 60 üstü puan
+  da Zayıf kurulum kalır. Açmak için Ayarlar'daki kutuyu işaretleyin ya da
+  `risk.use_resistance_cap: true` yapın. Geri testte (BIST100, 2016-2026) kapalıyken yıllık
+  getiri %28,2 / en büyük düşüş -%26, açıkken %21,9 / -%25 oldu; 2023'ten bu yana düşüş
+  kapalıyken daha derin (-%30'a karşı -%24).
 
 Eşikleri değiştirmeden önce `geritest` ile geçmişte nasıl sonuç verdiğine bakmanız önerilir:
 

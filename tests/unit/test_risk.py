@@ -8,6 +8,8 @@ from bist_quant.risk.position_size import position_size
 from bist_quant.risk.stop_loss import atr_stop, trailing_stop
 from bist_quant.risk.take_profit import r_targets
 
+CAP = RiskSettings(use_resistance_cap=True)  # the cap is off by default
+
 
 def test_atr_stop_spec_example():
     assert atr_stop(100, 3, 2) == 94
@@ -46,7 +48,7 @@ def test_trailing_stop_never_moves_down():
 
 
 def test_risk_plan_without_resistance():
-    plan = build_risk_plan(100, 3, RiskSettings(), resistance=None)
+    plan = build_risk_plan(100, 3, CAP, resistance=None)
     assert plan is not None
     assert (plan.stop, plan.tp1, plan.tp2) == (94, 109, 115)
     assert plan.risk_reward == 2.5
@@ -56,12 +58,12 @@ def test_risk_plan_without_resistance():
 
 
 def test_risk_plan_resistance_cap():
-    plan = build_risk_plan(100, 3, RiskSettings(), resistance=106)
+    plan = build_risk_plan(100, 3, CAP, resistance=106)
     assert plan.resistance_capped
     assert plan.risk_reward == 1.0
     # Resistance above TP2 or below entry does not cap.
-    assert not build_risk_plan(100, 3, RiskSettings(), resistance=130).resistance_capped
-    assert not build_risk_plan(100, 3, RiskSettings(), resistance=99).resistance_capped
+    assert not build_risk_plan(100, 3, CAP, resistance=130).resistance_capped
+    assert not build_risk_plan(100, 3, CAP, resistance=99).resistance_capped
     off = RiskSettings(use_resistance_cap=False)
     assert build_risk_plan(100, 3, off, resistance=106).risk_reward == 2.5
 

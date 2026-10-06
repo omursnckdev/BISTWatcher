@@ -5,7 +5,7 @@ from bist_quant.models.signals import MarketRegime, SignalType
 from bist_quant.risk.plan import build_risk_plan
 from bist_quant.strategy.entry import classify_signal
 
-S, R = StrategySettings(), RiskSettings()
+S, R = StrategySettings(), RiskSettings(use_resistance_cap=True)
 GOOD_PLAN = build_risk_plan(100, 3, R)
 CAPPED_PLAN = build_risk_plan(100, 3, R, resistance=104)
 
