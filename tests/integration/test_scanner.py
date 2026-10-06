@@ -152,7 +152,7 @@ def test_cli_buy_threshold_shifts_every_regime(capsys):
     base = ["tara", "--kaynak", "synthetic", "--semboller", "THYAO", *DEMO]
     assert main(base) == 0
     default = json.loads(capsys.readouterr().out)["signals"][0]
-    assert main([*base, "--alim-esigi", "60"]) == 0
+    assert main([*base, "--alim-esigi", "55"]) == 0
     shifted = json.loads(capsys.readouterr().out)["signals"][0]
-    # The default BULL threshold is 65, so every regime moves down by 5.
+    # The default BULL threshold is 60, so every regime moves down by 5.
     assert shifted["buy_threshold"] == default["buy_threshold"] - 5

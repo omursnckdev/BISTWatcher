@@ -89,10 +89,10 @@ class StrategySettings(BaseModel):
     profile: Literal["SWING"] = "SWING"
     buy_threshold: dict[MarketRegime, float] = Field(
         default_factory=lambda: {
-            MarketRegime.BULL: 65,
-            MarketRegime.NEUTRAL: 70,
-            MarketRegime.HIGH_VOLATILITY: 75,
-            MarketRegime.BEAR: 80,
+            MarketRegime.BULL: 60,
+            MarketRegime.NEUTRAL: 60,
+            MarketRegime.HIGH_VOLATILITY: 60,
+            MarketRegime.BEAR: 60,
         }
     )
     buy_threshold_offset: float = 0.0

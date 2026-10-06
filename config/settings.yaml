@@ -47,14 +47,18 @@ market_regime:
 
 strategy:
   profile: SWING
-  # Minimum score for BUY_CANDIDATE depends on the market regime.
-  # Lowered on 2026-10-05 (was 75/80/85/88, weak 65, watch 50) because the original
-  # bars produced almost no BUY candidates. Override per run with --alim-esigi.
+  # Minimum score for BUY_CANDIDATE per market regime. Override per run with --alim-esigi.
+  # 2026-10-05: 75/80/85/88 -> 65/70/75/80 (almost no BUY candidates).
+  # 2026-10-06: -> 60 in every regime. Real BIST100 backtest 2016-01 .. 2026-10 (no news,
+  # costs as in backtest.yaml): CAGR 18.6% -> 21.9%, Sharpe 1.11 -> 1.22, max DD -30% -> -25%,
+  # 2023+ CAGR 8.8% -> 15.5%; BUY candidates on HIGH_VOLATILITY days 2.2 -> 7.0 per session.
+  # The regime step-ups did not help (see docs/phase2_findings.md): the regime factor
+  # already lowers the score in weak markets. Flat 58-65 all score within noise of each other.
   buy_threshold:
-    BULL: 65
-    NEUTRAL: 70
-    HIGH_VOLATILITY: 75
-    BEAR: 80
+    BULL: 60
+    NEUTRAL: 60
+    HIGH_VOLATILITY: 60
+    BEAR: 60
   buy_threshold_offset: 0     # added to every regime threshold (used for robustness sweeps)
   strong_buy_margin: 10       # STRONG_BUY_CANDIDATE = buy_threshold + margin
   weak_setup_threshold: 55

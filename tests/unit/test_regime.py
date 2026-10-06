@@ -90,11 +90,12 @@ def test_breadth_is_optional_in_score(settings):
 
 def test_regime_modifies_thresholds(settings):
     t = {r: buy_threshold(r, settings.strategy) for r in MarketRegime}
-    assert t[MarketRegime.BULL] == 65
-    assert t[MarketRegime.NEUTRAL] == 70
-    assert t[MarketRegime.HIGH_VOLATILITY] == 75
-    assert t[MarketRegime.BEAR] == 80
-    assert t[MarketRegime.BULL] < t[MarketRegime.NEUTRAL] < t[MarketRegime.BEAR]
+    assert set(t.values()) == {60}  # one bar for every regime by default
+    stepped = settings.strategy.model_copy(
+        update={"buy_threshold": {**settings.strategy.buy_threshold, MarketRegime.BEAR: 70}}
+    )
+    assert buy_threshold(MarketRegime.BEAR, stepped) == 70
+    assert buy_threshold(MarketRegime.BULL, stepped) == 60
 
 
 def test_regime_history_labels(settings):

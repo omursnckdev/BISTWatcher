@@ -114,8 +114,9 @@ thresholds and bands live in `config/scoring.yaml`.
 | ≥ buy threshold | `BUY_CANDIDATE` |
 | ≥ buy threshold + 10 | `STRONG_BUY_CANDIDATE` |
 
-The buy threshold depends on the regime: BULL 65, NEUTRAL 70, HIGH_VOLATILITY 75, BEAR 80
-(`strategy.buy_threshold`; lowered in Oct 2026 from 75/80/85/88). `--alim-esigi N` sets the
+The buy threshold is set per regime (`strategy.buy_threshold`) and is 60 in every regime by
+default (Oct 2026: 75/80/85/88, then 65/70/75/80, then a flat 60 after a BIST100 backtest showed
+the regime step-ups did not help; the market-regime factor already lowers scores in weak markets). `--alim-esigi N` sets the
 BULL threshold to N for one run and shifts the others by the same amount. A buy-level score is still downgraded to `WEAK_SETUP` unless it
 has a valid risk plan with **reward/risk ≥ 2.0**. Illiquid symbols (20D average turnover below
 50M TRY) and stale or suspended symbols become `NO_TRADE`. Set `block_buys_in_bear: true` to

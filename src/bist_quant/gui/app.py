@@ -94,10 +94,30 @@ from bist_quant.gui.texts import (  # noqa: E402
 )
 from bist_quant.models.signals import MarketRegime, SignalType  # noqa: E402
 from bist_quant.strategy.exit_check import ExitAction, Holding  # noqa: E402
+from bist_quant.strategy.short_term import short_term_score  # noqa: E402
 
+ONE_DECIMAL = {"Puan", "G/R", "R", "K/Z %", "Günlük %", "Anlık %", "Özkaynak %", "Gün içi", "T+2"}
+HEADER_TIPS = {
+    "Gün içi": "Aynı gün al-sat uygunluğu (0-100): işlem hacmi, günlük fiyat aralığı,\n"
+    "hacim artışı ve kapanışın gün içi aralıktaki yeri. Sinyal değildir.",
+    "T+2": "1-2 seanslık (T+2) tutma uygunluğu (0-100): 3 günlük getiri, EMA20 üstü,\n"
+    "RSI, MACD ivmesi, oynaklık, hacim ve likidite. Sinyal değildir.",
+}
 SIGNED_COLUMNS = {"Günlük %", "Anlık %", "K/Z %", "K/Z TL", "R"}
 SIGNED_TEXT_LIGHT = ("#1b7a34", "#c62828")  # (up, down) on a light table
 SIGNED_TEXT_DARK = ("#5fd37a", "#ff7b7b")  # (up, down) on a dark table
+
+
+def short_term_line(features) -> str:
+    st = short_term_score(features)
+    if st is None:
+        return ""
+    return (
+        f"<p style='margin:2px 0'>Kısa vade uygunluğu: Gün içi <b>{st.intraday:.0f}</b>/100"
+        f" · T+2 <b>{st.two_day:.0f}</b>/100 &nbsp;<small style='color:#666'>(10 günlük ort."
+        f" aralık %{money(st.avg_range_pct, 1)}, 3 günlük getiri {st.return_3d_pct:+.1f}%)"
+        "</small></p>"
+    )
 
 
 def signed(value) -> bool:
@@ -161,8 +181,11 @@ class RowsModel(QAbstractTableModel):
         return 0 if parent.isValid() else len(self.cols)
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):  # noqa: N802
-        if role == Qt.ItemDataRole.DisplayRole and orientation == Qt.Orientation.Horizontal:
-            return self.cols[section]
+        if orientation == Qt.Orientation.Horizontal:
+            if role == Qt.ItemDataRole.DisplayRole:
+                return self.cols[section]
+            if role == Qt.ItemDataRole.ToolTipRole:
+                return HEADER_TIPS.get(self.cols[section])
         return None
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
@@ -176,9 +199,7 @@ class RowsModel(QAbstractTableModel):
             if isinstance(value, float):
                 return money(
                     value,
-                    1
-                    if col in {"Puan", "G/R", "R", "K/Z %", "Günlük %", "Anlık %", "Özkaynak %"}
-                    else 2,
+                    1 if col in ONE_DECIMAL else 2,
                 )
             if isinstance(value, int) and not isinstance(value, bool) and col != "Sıra":
                 return money(value, 0)
@@ -716,6 +737,7 @@ class MainWindow(QMainWindow):
             f" &nbsp;· Elindeyse: <b style='color:{'#c62828' if held == 'SAT' else '#1b8a3a'}'>"
             f"{held}</b></p>",
             live,
+            short_term_line(result.features.get(s.symbol)),
         ]
         if s.risk:
             p = s.risk
@@ -1453,6 +1475,13 @@ bozulması, zaman stop'u ve azami tutma süresini uygular.</li>
 <p>Stop = giriş − 2×ATR, TP1 = 1,5R, TP2 = 2,5R. Lot sayısı, Ayarlar'daki portföy büyüklüğü ve
 işlem başına risk yüzdesine göre hesaplanır. AL için getiri/risk en az asgari değer olmalıdır;
 üstte yakın bir direnç varsa hedef dirençle sınırlanır (Ayarlar'dan kapatılabilir).</p>
+<h3>Gün içi ve T+2 sütunları</h3>
+<p>Çok kısa vadeli işlem için 0-100 arası uygunluk puanlarıdır; başlığa tıklayarak sıralayın.
+<b>Gün içi</b> (aynı gün al-sat): ortalama işlem hacmi (TL), son 10 günün ortalama fiyat aralığı
+(maliyeti karşılayacak kadar geniş ama aşırı olmayan), hacim artışı ve kapanışın günün
+tepesine yakınlığı. <b>T+2</b> (1-2 seans tutma): 3 günlük getiri, EMA20 üstü, RSI, MACD ivmesi,
+oynaklık, hacim ve likidite. Bunlar koşulları sıralar, AL sinyali değildir; son kapanışa göre
+hesaplanır.</p>
 <h3>Veri</h3>
 <p>Gerçek fiyatlar Yahoo Finance'ten (günlük, ~15 dk gecikmeli) indirilir ve veri klasöründe
 önbelleğe alınır. KAP bildirimleri kap.org.tr'den alınır. İnternet yoksa Ayarlar'dan sentetik
