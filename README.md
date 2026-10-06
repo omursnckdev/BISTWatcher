@@ -34,6 +34,11 @@ Uygulamanın sekmeleri:
 | **Geri Test** | Aynı kuralların geçmiş performansı: getiri, düşüş, Sharpe, işlem listesi, endeksle karşılaştırmalı özkaynak grafiği. |
 | **Ayarlar** | Veri kaynağı, AL eşiği, direnç sınırı, asgari getiri/risk, portföy büyüklüğü, işlem başı risk, özel liste. |
 
+Puan ve sinyaller her zaman **son tamamlanmış seansın kapanışına** göre hesaplanır; seans
+açıkken yarım günlük mum kullanılmaz. Bu yüzden seans içinde "Son Kapanış" sütunu dünkü
+kapanıştır. Gerçek veride yanına **Anlık** ve **Anlık %** sütunları eklenir (Yahoo, ~15 dk
+gecikmeli); **Anlık fiyatları yenile** düğmesi bunları tarama yapmadan günceller.
+
 Tarama sonuçları **Excel** (AL listesi, SAT uyarıları, portföy, gerekçeler ayrı sayfalarda),
 **HTML** (yazdırılabilir rapor) ve **CSV** olarak kaydedilebilir.
 
@@ -164,22 +169,25 @@ Puan tek başına yetmez. AL adayı olmak için ayrıca şunlar gerekir:
 
 ## 5. AL eşikleri ve gevşetme
 
-AL eşiği piyasanın durumuna göre değişir. Piyasa kötüyse daha yüksek puan istenir.
+AL eşiği her piyasa durumu için ayrı ayarlanabilir; varsayılan hepsinde **60**, güçlü AL 70.
 
 | Piyasa durumu | Ne zaman | AL eşiği | Güçlü AL |
 |---|---|---:|---:|
-| `BULL` (boğa) | XU100 yükseliş trendinde | 65 | 75 |
-| `NEUTRAL` (nötr) | Belirgin bir yön yok | 70 | 80 |
-| `HIGH_VOLATILITY` (yüksek oynaklık) | Endeks sert dalgalanıyor ya da 60 günlük zirvesinden %15+ düşmüş | 75 | 85 |
-| `BEAR` (ayı) | XU100 düşüş trendinde | 80 | 90 |
+| `BULL` (boğa) | XU100 yükseliş trendinde | 60 | 70 |
+| `NEUTRAL` (nötr) | Belirgin bir yön yok | 60 | 70 |
+| `HIGH_VOLATILITY` (yüksek oynaklık) | Endeks sert dalgalanıyor ya da 60 günlük zirvesinden %15+ düşmüş | 60 | 70 |
+| `BEAR` (ayı) | XU100 düşüş trendinde | 60 | 70 |
 
-Bu eşikler Ekim 2026'da düşürüldü. Eski değerler 75 / 80 / 85 / 88 idi, `WATCH` 50'de,
-`WEAK_SETUP` 65'te başlıyordu.
+Eşikler Ekim 2026'da iki kez düşürüldü: 75/80/85/88, sonra 65/70/75/80, sonra her durumda 60.
+Son değişiklik gerçek BIST100 verisiyle 2016-2026 geri testine dayanıyor: kötü piyasada eşiği
+yükseltmek sonucu iyileştirmedi, çünkü piyasa durumu faktörü zaten puanı düşürüyor. Her durumda 60,
+eski ayara göre daha yüksek getiri (yıllık %21,9'a karşı %18,6), daha küçük düşüş (-%25'e karşı
+-%30) ve yüksek oynaklık günlerinde seans başına yaklaşık 7 aday (eskiden 2) verdi.
 
 Daha fazla aday görmek için:
 
-- **Tek bir taramada:** `python -m bist_quant tara --alim-esigi 60` yazın. Bu, BOĞA eşiğini
-  60 yapar ve diğer durumları da aynı miktarda (5 puan) indirir.
+- **Tek bir taramada:** `python -m bist_quant tara --alim-esigi 55` yazın. Bu, BOĞA eşiğini
+  55 yapar ve diğer durumları da aynı miktarda (5 puan) indirir.
 - **Kalıcı olarak:** `config/settings.yaml` içindeki `strategy.buy_threshold` değerlerini
   değiştirin.
 - **Direnç kontrolünü kapatmak için:** `config/settings.yaml` içinde

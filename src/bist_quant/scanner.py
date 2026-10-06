@@ -75,6 +75,9 @@ class ScanResult:
     quality: dict[str, DataQualityReport] = field(default_factory=dict)
     features: dict[str, pd.DataFrame] = field(default_factory=dict)
     index_features: pd.DataFrame | None = None
+    # Latest (delayed) traded prices, filled by callers that want them for display only.
+    # Signals always use the last completed session close.
+    live_quotes: dict = field(default_factory=dict)
 
 
 def prepare_bars(

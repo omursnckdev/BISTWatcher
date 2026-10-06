@@ -151,3 +151,29 @@ def test_merge_history_rescales_old_adjustments():
     assert len(merged) == 10
     factors = merged["adjusted_close"] / merged["close"]
     assert factors.round(9).nunique() == 1
+
+
+def test_yahoo_parse_quote():
+    from bist_quant.data.market_data import ISTANBUL_TZ
+
+    payload = {
+        "chart": {
+            "result": [
+                {
+                    "meta": {
+                        "regularMarketPrice": 694.0,
+                        "regularMarketTime": 1791270780,  # 2026-10-06 10:13 Istanbul
+                        "chartPreviousClose": 703.5,
+                        "exchangeTimezoneName": "Europe/Istanbul",
+                    }
+                }
+            ],
+            "error": None,
+        }
+    }
+    q = YahooChartProvider.parse_quote(payload, "BRSAN")
+    assert q.price == 694.0
+    assert q.previous_close == 703.5
+    assert q.time.tzinfo == ISTANBUL_TZ
+    with pytest.raises(DataProviderError):
+        YahooChartProvider.parse_quote({"chart": {"result": [{"meta": {}}]}}, "X")

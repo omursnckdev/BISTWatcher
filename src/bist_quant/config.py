@@ -89,10 +89,10 @@ class StrategySettings(BaseModel):
     profile: Literal["SWING"] = "SWING"
     buy_threshold: dict[MarketRegime, float] = Field(
         default_factory=lambda: {
-            MarketRegime.BULL: 65,
-            MarketRegime.NEUTRAL: 70,
-            MarketRegime.HIGH_VOLATILITY: 75,
-            MarketRegime.BEAR: 80,
+            MarketRegime.BULL: 60,
+            MarketRegime.NEUTRAL: 60,
+            MarketRegime.HIGH_VOLATILITY: 60,
+            MarketRegime.BEAR: 60,
         }
     )
     buy_threshold_offset: float = 0.0
@@ -273,6 +273,9 @@ class BacktestSettings(BaseModel):
     slippage_pct: float = Field(0.001, ge=0)
     risk_free_rate_annual_pct: float = 0.0
     cash_interest_annual_pct: float = 0.0
+    # Skip entries whose size (after risk / cash / sector caps) is below this % of equity:
+    # leftover capacity would otherwise open token positions of a few shares.
+    min_position_pct: float = Field(2.0, ge=0, le=100)
     exits: ExitSettings = Field(default_factory=ExitSettings)
 
 
