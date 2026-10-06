@@ -79,6 +79,7 @@ from bist_quant.gui.prefs import (  # noqa: E402
     save_holdings,
     save_prefs,
 )
+from bist_quant.gui.telegram_panel import TelegramController, TelegramTab  # noqa: E402
 from bist_quant.gui.texts import (  # noqa: E402
     ACTION_COLOR,
     ACTION_TR,
@@ -324,6 +325,8 @@ class MainWindow(QMainWindow):
         self.analysis_result = None
         self.portfolio_result = None
         self.backtest_result = None
+        self.last_update: datetime | None = None
+        self.telegram = TelegramController(self)
 
         self.setWindowTitle(f"{APP_NAME} {__version__}  ·  BIST tarama ve sinyal aracı")
         self.resize(1400, 860)
@@ -337,6 +340,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self._portfolio_tab(), "Portföyüm (SAT/TUT)")
         self.tabs.addTab(self._backtest_tab(), "Geri Test")
         self.tabs.addTab(self._settings_tab(), "Ayarlar")
+        self.tabs.addTab(TelegramTab(self.telegram), "Telegram")
         self.tabs.addTab(self._help_tab(), "Yardım")
 
         central = QWidget()
@@ -353,7 +357,6 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(self.progress)
         self.refresh_label = QLabel("")
         self.statusBar().addPermanentWidget(self.refresh_label)
-        self.last_update: datetime | None = None
         self._quiet = False
         self.auto_scan_skip: date | None = None  # a session that did not show up (holiday)
         self.auto_timer = QTimer(self)
@@ -372,6 +375,11 @@ class MainWindow(QMainWindow):
         quit_action = QAction("Çıkış", self)
         quit_action.triggered.connect(self.close)
         menu.addAction(quit_action)
+        self.telegram.start()
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        self.telegram.stop()
+        super().closeEvent(event)
 
     # ------------------------------------------------------------ plumbing
     def settings(self):
@@ -647,6 +655,7 @@ class MainWindow(QMainWindow):
         for b in self.export_buttons:
             b.setEnabled(True)
         self._fill_scan_table()
+        self.telegram.on_scan(result, historical=self.scan_use_date.isChecked())
 
     def _set_scan_summary(self) -> None:
         lines = report.summary_lines(self.scan_result)
@@ -1056,6 +1065,7 @@ class MainWindow(QMainWindow):
             f"açık K/Z {money(total, 0)} TL · Fiyatlar {result.scan.as_of:%d.%m.%Y} kapanışı. "
             "SAT kararı ertesi seansın açılışında uygulanacak şekilde hesaplanır."
         )
+        self.telegram.on_portfolio(result)
 
     def _portfolio_open_chart(self) -> None:
         row = selected_row(self.portfolio_view, self.portfolio_proxy, self.portfolio_model)
@@ -1522,6 +1532,16 @@ def self_test(out_path: str | None) -> int:
             win.analysis_canvas.figure.savefig(home / "chart.png")
             win.close()
             lines.append("gui: ok")
+            from bist_quant.gui import telegram_bot as tb
+
+            texts = [
+                tb.scan_text(result),
+                tb.portfolio_text([holding], pr),
+                tb.analysis_caption(result, last.symbol),
+                tb.status_text(result, pr, [holding], datetime.now(), 5, "synthetic"),
+            ]
+            png = tb.chart_png(result, last.symbol)
+            lines.append(f"telegram: {sum(map(len, texts))} chars, chart {len(png)} bytes")
         except Exception:  # noqa: BLE001
             lines.append(traceback.format_exc())
             code = 1
